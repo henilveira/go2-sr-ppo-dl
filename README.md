@@ -1,6 +1,6 @@
 # Go2 Self-Recovery (PPO)
 
-This repository is a **replication attempt** of a self-righting (self-recovery) model originally developed by the **ITU Istanbul** institute. It was created to support a **co-authorship** in a PhD thesis in Electrical Engineering (Automation & Control) at **UDESC**, within the **MOBI Autonomous Systems Laboratory**.
+This repository is a **replication** of a self-righting (self-recovery) model originally developed by the **ITU Istanbul** institute. It was created to support a **co-authorship** in a PhD thesis in Electrical Engineering (Automation & Control) at **UDESC**, within the **MOBI Autonomous Systems Laboratory**.
 
 ## Technical Overview
 - **Robot**: Unitree Go2 quadruped
