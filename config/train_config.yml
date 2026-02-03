@@ -1,0 +1,158 @@
+# ====================================================================
+# QUADRUPED SELF-RECOVERY CONFIG - UNITREE GO2 + MUJOCO
+# Based on: "Self-Recovery of Quadrupedal Robot Using DRL" (2024)
+# Robot: Unitree Go2 (instead of A1)
+# Simulator: MuJoCo (instead of PyBullet)
+# ====================================================================
+
+# ==================== ROBOT CONFIGURATION ====================
+robot:
+  name: "unitree_go2"
+
+  # MuJoCo model path
+  # Using model from root project directory
+  model_path: "../../environment/assets/unitree_go2/scene.xml"
+
+  num_joints: 12
+
+  # Heights (from paper Fig. 3)
+  # Note: Go2 dimensions may differ slightly from A1
+  max_height: 0.34 # Paper: "0.34 meter is the max height"
+  target_height: 0.31 # Paper: "threshold at 0.31 meter"
+
+# ==================== OBSERVATION SPACE ====================
+# Paper Table I: 30-dimensional observation
+observation:
+  size: 30
+  components:
+    joint_positions: 12 # indices 0-11
+    joint_velocities: 12 # indices 12-23
+    base_orientation: 3 # indices 24-26 (θ_B = R^-1 · g)
+    base_angular_velocity: 3 # indices 27-29
+
+  # Add sensor noise (paper: "to replicate real robot")
+  add_noise: true
+  noise:
+    joint_positions: 0.1 # ±0.1 rad
+    joint_velocities: 1.0 # ±1.0 rad/s
+    base_angular_velocity: 0.2 # ±0.2 rad/s
+
+  # Normalization ranges (eq. 7: map to [-1, 1])
+  # These are defaults - run extract_go2_params.py to get exact values
+  normalization:
+    joint_pos_min: -3.14
+    joint_pos_max: 3.14
+    joint_vel_min: -30.0
+    joint_vel_max: 30.0
+    base_orient_min: -1.0 # Already normalized (unit vector)
+    base_orient_max: 1.0
+    base_ang_vel_min: -10.0
+    base_ang_vel_max: 10.0
+
+# ==================== ACTION SPACE ====================
+# Paper: "12 nodes, each representing the joint position command"
+action:
+  size: 12
+  type: "continuous"
+  range: [-1.0, 1.0] # Normalized, then rescaled to joint limits
+  smoothing: 0.35 # EMA smoothing in env step()
+  scale: 0.7 # Scale joint limits to reduce thrashing
+
+# ==================== PD CONTROLLER ====================
+# Paper Fig. 1: Policy outputs target positions to PD controller
+controller:
+  type: "pd"
+  kp: 30.0 # Position gain - Lower for smoother control
+  kd: 5.0 # Derivative gain - Higher for damping oscillations
+  max_torque: 23.5 # Nm - Go2 actuator limit
+
+# ==================== REWARD FUNCTION ====================
+# Paper Table II & III, Eq. (9)
+# IMPORTANT: All individual rewards are now in [0,1] range
+reward:
+  weights:
+    # Always active rewards
+    w1: 0.5 # R_h: Height reward
+    w2: 0.5 # R_g: Orientation reward
+
+    # Curriculum rewards (only when R_g > threshold)
+    w3: 0.3 # R_h_cl: Height reward again
+    w4: 0.3 # R_jp: Joint position reward
+    w5: 0.2 # R_fc: Foot contact reward
+
+    # Smoothness/regularization (always active)
+    w6: 0.4 # R_ad: Action difference
+    w7: 0.1 # R_v: Joint velocity cost
+    w8: 0.1 # R_vb: Base linear velocity cost
+
+  # Curriculum learning
+  curriculum:
+    enabled: true
+    orientation_threshold: 0.7 # Activate when R_g_normalized > 0.7
+
+# ==================== PPO HYPERPARAMETERS ====================
+# Paper Table IV - with INCREASED exploration
+ppo:
+  learning_rate: 3.3e-4
+  n_steps: 1024
+  batch_size: 32
+  n_epochs: 10
+  gamma: 0.97
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 2.0e-5
+  vf_coef: 0.3
+  max_grad_norm: 0.7
+
+  # Network architecture (paper: 256-256-16 with ReLU)
+  policy_kwargs:
+    net_arch: [256, 256, 16]
+    activation_fn: "relu"
+
+  verbose: 1
+  tensorboard_log: "./logs/"
+
+# ==================== TRAINING ====================
+# Paper: "300 episodes in 12 parallel environments"
+training:
+  # Parallel environments
+  num_parallel_envs: 12
+
+  # Episode settings
+  max_episode_steps: 1024 # Aligned with n_steps
+
+  # Initial conditions (paper: "dropped from 0.5 meters")
+  drop_height: 0.5
+  random_orientation: true
+  random_joint_positions: true
+
+  # Training duration
+  total_episodes: 300
+  # total_timesteps: 3_686_400 # 300 × 1024 × 12
+  total_timesteps: 200_000 # 300 × 1024 × 12
+
+  # Checkpointing
+  save_freq: 100_000
+  eval_freq: 50_000
+  n_eval_episodes: 10
+  log_interval: 10
+
+# ==================== SIMULATION ====================
+simulation:
+  engine: "mujoco"
+
+  # Physics timestep
+  # MuJoCo default: 0.002s (500 Hz)
+  # Control freq: 50 Hz (from n_steps=1024 per episode)
+  # So n_substeps = 500/50 = 10
+  n_substeps: 10
+
+  # Termination
+  # Paper: "only termination condition was max steps"
+  early_termination: false
+
+# ==================== PATHS ====================
+paths:
+  checkpoints: "./checkpoints/"
+  logs: "./logs/"
+  videos: "./videos/"
