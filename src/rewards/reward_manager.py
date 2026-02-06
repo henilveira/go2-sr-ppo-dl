@@ -31,12 +31,14 @@ class RewardManager:
         self.curriculum_active = False
         
         # Standing pose reference for Go2 (in radians)
-        # These are approximate standing joint angles
+        # From MuJoCo menagerie Go2 model - typical standing configuration
+        # Hip: ~0, Thigh: ~0.8 (bent forward), Calf: ~-1.5 (bent back)
+        # These values should be close to the robot's natural standing pose
         self.standing_pose = np.array([
-            0.0, 0.8, -1.5,   # FR: hip, thigh, calf
-            0.0, 0.8, -1.5,   # FL
-            0.0, 0.8, -1.5,   # RR
-            0.0, 0.8, -1.5    # RL
+            0.0, 0.67, -1.3,   # FR: hip, thigh, calf
+            0.0, 0.67, -1.3,   # FL
+            0.0, 0.67, -1.3,   # RR
+            0.0, 0.67, -1.3    # RL
         ])
         
     def compute(self, obs, action, prev_action, info):
@@ -91,6 +93,20 @@ class RewardManager:
             rewards['R_jp'] = 0.0
             rewards['R_fc'] = 0.0
         
+        # ========== BONUS: ALIVE REWARD ==========
+        # Small constant reward for surviving - encourages longer episodes
+        # This helps bootstrap learning when other rewards are sparse
+        rewards['R_alive'] = 0.1
+        
+        # ========== BONUS: UPRIGHTNESS PROGRESS ==========
+        # Extra shaping reward for making progress toward upright
+        # This helps guide the policy in the right direction
+        z_component = self._get_body_z_in_world()
+        # z_component = -1 when upside down, +1 when upright
+        # Map to [0, 1]: (z + 1) / 2
+        progress_reward = (z_component + 1.0) / 2.0
+        rewards['R_progress'] = progress_reward
+        
         # ========== TOTAL REWARD ==========
         # Paper Eq. (9): weighted sum
         total_reward = (
@@ -101,13 +117,27 @@ class RewardManager:
             self.weights['w5'] * rewards['R_fc'] +
             self.weights['w6'] * rewards['R_ad'] +
             self.weights['w7'] * rewards['R_v'] +
-            self.weights['w8'] * rewards['R_vb']
+            self.weights['w8'] * rewards['R_vb'] +
+            0.05 * rewards['R_alive'] +  # Small alive bonus
+            0.1 * rewards['R_progress']  # Small progress shaping
         )
         
         rewards['total'] = total_reward
         rewards['curriculum_active'] = float(self.curriculum_active)
         
         return total_reward, rewards
+    
+    def _get_body_z_in_world(self):
+        """Get the z-component of body's up vector in world frame"""
+        import mujoco
+        base_quat = self.data.qpos[3:7]
+        rot_matrix = np.zeros(9)
+        mujoco.mju_quat2Mat(rot_matrix, base_quat)
+        rot_matrix = rot_matrix.reshape(3, 3)
+        # Body's local z-axis in world frame
+        body_z = rot_matrix @ np.array([0.0, 0.0, 1.0])
+        # Return world z component (positive = upright)
+        return body_z[2]
     
     def _compute_height_reward(self, height):
         """

@@ -33,6 +33,11 @@ class Go2Env(gym.Env):
         self.config = config
         self.render_mode = render_mode
         
+        # Timesteps - must be defined BEFORE _load_model()
+        self.dyn_dt = self.config.get('simulation', {}).get('dyn_dt', 0.001)  # Physics timestep
+        self.con_dt = self.config.get('simulation', {}).get('con_dt', 0.01)   # Control timestep
+        self.n_substeps = int(self.con_dt / self.dyn_dt)  # How many physics steps per control step
+        
         # Load MuJoCo model
         self._load_model()
         
@@ -69,7 +74,6 @@ class Go2Env(gym.Env):
     def _load_model(self):
         """Load Go2 MuJoCo model"""
         # Path to Go2 XML model
-        # Você pode baixar de: https://github.com/google-deepmind/mujoco_menagerie
         model_path = self.config['robot'].get('model_path', 'assets/mujoco/unitree_go2/scene.xml')
         
         # Make path absolute if relative
@@ -85,6 +89,8 @@ class Go2Env(gym.Env):
             )
         
         self.model = mujoco.MjModel.from_xml_path(str(model_path))
+        self.model.opt.timestep = self.dyn_dt
+
         self.data = mujoco.MjData(self.model)
         
         # Get joint IDs (Go2 has 12 actuated joints)
@@ -123,68 +129,43 @@ class Go2Env(gym.Env):
         print(f"Found {len(self.joint_ids)} controllable joints")
         
     def reset(self, seed=None, options=None):
-        """Reset environment to initial state - robot lying on ground"""
+        """Reset environment to initial state - robot on its back with legs tucked"""
         super().reset(seed=seed)
         
         # Reset MuJoCo simulation
         mujoco.mj_resetData(self.model, self.data)
         
-        # Paper: Robot starts in fallen/lying positions for self-righting
-        # Use configurations similar to original go2_sr project
+        # ============================================================
+        # INITIAL POSITION: Robot on its back (belly up), legs tucked
+        # This is the self-recovery starting position from the paper
+        # ============================================================
         
-        # Base position - LOW on the ground (like original b0 = [0, 0, 0.085])
-        initial_height = 0.085  # Very low - robot lying down
+        # Base position - LOW on the ground
+        initial_height = 0.12  # Slightly higher to account for legs
         self.data.qpos[0:3] = [0, 0, initial_height]
         
-        # Random orientation - fallen robot configurations
-        if self.config['training'].get('random_orientation', True):
-            # Sample from common fallen orientations
-            # Option 1: On back (most common)
-            # Option 2: On side
-            # Option 3: Tilted
-            rand_type = np.random.randint(0, 4)
-            
-            if rand_type == 0:
-                # On back (upside down) - like original [pi, 0, 0]
-                roll = np.pi + np.random.uniform(-0.2, 0.2)
-                pitch = np.random.uniform(-0.2, 0.2)
-                yaw = np.random.uniform(-np.pi, np.pi)
-            elif rand_type == 1:
-                # On right side
-                roll = np.pi/2 + np.random.uniform(-0.3, 0.3)
-                pitch = np.random.uniform(-0.2, 0.2)
-                yaw = np.random.uniform(-np.pi, np.pi)
-            elif rand_type == 2:
-                # On left side
-                roll = -np.pi/2 + np.random.uniform(-0.3, 0.3)
-                pitch = np.random.uniform(-0.2, 0.2)
-                yaw = np.random.uniform(-np.pi, np.pi)
-            else:
-                # Tilted/random
-                roll = np.random.uniform(-np.pi, np.pi)
-                pitch = np.random.uniform(-np.pi/3, np.pi/3)
-                yaw = np.random.uniform(-np.pi, np.pi)
-                
-            quat = self._euler_to_quat([roll, pitch, yaw])
-        else:
-            # Default: robot on its back like original
-            quat = self._euler_to_quat([np.pi, 0, 0])
-        
+        # Orientation: ALWAYS on back (upside down) - roll = π
+        # Small random variations only
+        roll = np.pi + np.random.uniform(-0.1, 0.1)  # ~180° (on back)
+        pitch = np.random.uniform(-0.1, 0.1)  # Small pitch variation
+        yaw = np.random.uniform(-np.pi, np.pi)  # Any yaw is fine
+        quat = self._euler_to_quat([roll, pitch, yaw])
         self.data.qpos[3:7] = quat
         
-        # Joint positions - use reasonable fallen positions
+        # Joint positions: Legs TUCKED IN (bent towards body)
+        # When on back, legs should be folded up
+        # Thigh ~2.0 (bent up), Calf ~-2.0 (bent back towards thigh)
+        tucked_config = np.array([
+            0.0, 1.8, -2.4,   # FR: hip neutral, thigh up, calf tucked
+            0.0, 1.8, -2.4,   # FL
+            0.0, 1.8, -2.4,   # RR  
+            0.0, 1.8, -2.4    # RL
+        ])
+        
+        # Add small random noise to joint positions
         if self.config['training'].get('random_joint_positions', True):
-            # Base configuration similar to original: [-0.2, 2, -1.65, ...]
-            # But with randomization
-            base_config = np.array([
-                -0.2, 2.0, -1.65,   # FR
-                -0.6, 1.86, -1.65,  # FL
-                -0.5, 1.06, -1.0,   # RR
-                0.25, 1.36, -1.05   # RL
-            ])
-            # Add random noise
-            noise = np.random.uniform(-0.3, 0.3, size=12)
-            joint_pos = base_config + noise
+            noise = np.random.uniform(-0.2, 0.2, size=12)
+            joint_pos = tucked_config + noise
             
             # Clip to joint limits
             for i, (lower, upper) in enumerate(self.joint_limits):
@@ -192,14 +173,7 @@ class Go2Env(gym.Env):
             
             self.data.qpos[7:19] = joint_pos
         else:
-            # Default fallen configuration
-            default_config = np.array([
-                -0.2, 2.0, -1.65,   # FR
-                -0.6, 1.86, -1.65,  # FL
-                -0.5, 1.06, -1.0,   # RR
-                0.25, 1.36, -1.05   # RL
-            ])
-            self.data.qpos[7:19] = default_config
+            self.data.qpos[7:19] = tucked_config
         
         # Zero velocities
         self.data.qvel[:] = 0
@@ -234,15 +208,8 @@ class Go2Env(gym.Env):
         # Scale action from [-1, 1] to actual joint limits
         scaled_action = self._scale_action(smoothed_action)
         
-        # Apply action using PD controller
-        self._apply_pd_control(scaled_action)
-        
-        # Step simulation
-        # Paper doesn't specify physics timestep, using typical value
-        # Control freq = 50Hz (from Table IV: n_steps=1024 per episode)
-        n_substeps = self.config.get('simulation', {}).get('n_substeps', 5)
-        
-        for _ in range(n_substeps):
+        for _ in range(self.n_substeps):
+            self._apply_pd_control(scaled_action)
             mujoco.mj_step(self.model, self.data)
         
         # Get observation
@@ -479,15 +446,21 @@ class Go2Env(gym.Env):
         Check which feet are in contact with ground
         Returns list of 4 booleans [FR, FL, RR, RL]
         """
-        # Feet geom names in Go2 model
+        # Feet geom names in Go2 model (from mujoco_menagerie)
         feet_geom_names = [
-            'FR_foot',
-            'FL_foot', 
-            'RR_foot',
-            'RL_foot'
+            'FR',  # Front Right foot
+            'FL',  # Front Left foot
+            'RR',  # Rear Right foot
+            'RL'   # Rear Left foot
         ]
         
         contacts = [False] * 4
+        
+        # Get floor geom ID (usually 0, but let's be safe)
+        try:
+            floor_id = self.model.geom('floor').id
+        except KeyError:
+            floor_id = 0  # Assume floor is geom 0
         
         # Check all contacts
         for i in range(self.data.ncon):
@@ -502,9 +475,9 @@ class Go2Env(gym.Env):
                 try:
                     foot_geom_id = self.model.geom(foot_name).id
                     
-                    # Check if foot is in contact with ground (geom 0)
-                    if (geom1 == foot_geom_id and geom2 == 0) or \
-                       (geom2 == foot_geom_id and geom1 == 0):
+                    # Check if foot is in contact with ground
+                    if (geom1 == foot_geom_id and geom2 == floor_id) or \
+                       (geom2 == foot_geom_id and geom1 == floor_id):
                         contacts[j] = True
                 except KeyError:
                     pass  # Geom name not found

@@ -11,7 +11,7 @@ robot:
 
   # MuJoCo model path
   # Using model from root project directory
-  model_path: "../../environment/assets/unitree_go2/scene.xml"
+  model_path: "../../go2-sr-ppo-dl/environment/assets/unitree_go2/scene.xml"
 
   num_joints: 12
 
@@ -55,8 +55,8 @@ action:
   size: 12
   type: "continuous"
   range: [-1.0, 1.0] # Normalized, then rescaled to joint limits
-  smoothing: 0.35 # EMA smoothing in env step()
-  scale: 0.7 # Scale joint limits to reduce thrashing
+  smoothing: 0.3 # EMA smoothing in env step() - slightly reduced for responsiveness
+  scale: 1.0 # FULL joint range - robot needs full motion to flip over
 
 # ==================== PD CONTROLLER ====================
 # Paper Fig. 1: Policy outputs target positions to PD controller
@@ -80,29 +80,30 @@ reward:
     w4: 0.3 # R_jp: Joint position reward
     w5: 0.2 # R_fc: Foot contact reward
 
-    # Smoothness/regularization (always active)
-    w6: 0.4 # R_ad: Action difference
-    w7: 0.1 # R_v: Joint velocity cost
-    w8: 0.1 # R_vb: Base linear velocity cost
+    # Smoothness/regularization - INCREASED to penalize jerky movements
+    w6: 0.6 # R_ad: Action difference (HIGH - smooth actions)
+    w7: 0.3 # R_v: Joint velocity cost (penalize fast joint movements)
+    w8: 0.2 # R_vb: Base linear velocity cost
 
   # Curriculum learning
   curriculum:
     enabled: true
-    orientation_threshold: 0.7 # Activate when R_g_normalized > 0.7
+    orientation_threshold: 0.4 # LOWERED - activate curriculum earlier
 
 # ==================== PPO HYPERPARAMETERS ====================
 # Paper Table IV - with INCREASED exploration
 ppo:
-  learning_rate: 3.3e-4
-  n_steps: 1024
+  # Paper Table IV - original hyperparameters
   batch_size: 32
-  n_epochs: 10
+  learning_rate: 3.3e-4
   gamma: 0.97
-  gae_lambda: 0.95
-  clip_range: 0.2
   ent_coef: 2.0e-5
+  gae_lambda: 0.95
   vf_coef: 0.3
   max_grad_norm: 0.7
+  n_steps: 1024
+  n_epochs: 10
+  clip_range: 0.2
 
   # Network architecture (paper: 256-256-16 with ReLU)
   policy_kwargs:
@@ -115,11 +116,11 @@ ppo:
 # ==================== TRAINING ====================
 # Paper: "300 episodes in 12 parallel environments"
 training:
-  # Parallel environments
-  num_parallel_envs: 12
+  # Parallel environments - reduced for stability during debugging
+  num_parallel_envs: 8
 
-  # Episode settings
-  max_episode_steps: 1024 # Aligned with n_steps
+  # Episode settings - SHORTER episodes for faster learning signal
+  max_episode_steps: 512
 
   # Initial conditions (paper: "dropped from 0.5 meters")
   drop_height: 0.5
@@ -128,14 +129,14 @@ training:
 
   # Training duration
   total_episodes: 300
-  # total_timesteps: 3_686_400 # 300 × 1024 × 12
-  total_timesteps: 200_000 # 300 × 1024 × 12
+  # Paper: 300 × 1024 × 12 = 3.7M timesteps minimum
+  total_timesteps: 1_000_000 # Start with 2M, increase if needed
 
   # Checkpointing
   save_freq: 100_000
-  eval_freq: 50_000
+  eval_freq: 25_000 # More frequent eval to track progress
   n_eval_episodes: 10
-  log_interval: 10
+  log_interval: 5 # More frequent logging
 
 # ==================== SIMULATION ====================
 simulation:
