@@ -43,12 +43,12 @@ class Go2Env(gym.Env):
         
         # Define observation and action spaces
         self.observation_space = spaces.Box(
-            low=-np.inf,
-            high=np.inf,
+            low=-1.0,
+            high=1.0,
             shape=(30,),
             dtype=np.float32
         )
-        
+
         self.action_space = spaces.Box(
             low=-1.0,
             high=1.0,
@@ -97,27 +97,35 @@ class Go2Env(gym.Env):
         self._setup_joints()
         
     def _setup_joints(self):
-        """Map controllable joints"""
-        # Go2 joint names (em ordem):
-        # FR: hip, thigh, calf (Front Right)
-        # FL: hip, thigh, calf (Front Left)  
-        # RR: hip, thigh, calf (Rear Right)
-        # RL: hip, thigh, calf (Rear Left)
+        """
+        Map joints and actuators correctly.
+        IMPORTANTE: A ordem dos joints (qpos) pode ser diferente da ordem dos actuators (ctrl)!
+        """
+        # Definir ordem das pernas e links
+        self.legs = ['FR', 'FL', 'RR', 'RL']
+        self.links = ['hip', 'thigh', 'calf']
         
-        joint_names = [
-            'FR_hip_joint', 'FR_thigh_joint', 'FR_calf_joint',
-            'FL_hip_joint', 'FL_thigh_joint', 'FL_calf_joint',
-            'RR_hip_joint', 'RR_thigh_joint', 'RR_calf_joint',
-            'RL_hip_joint', 'RL_thigh_joint', 'RL_calf_joint',
-        ]
+        # Construir nomes na ordem que queremos usar na policy
+        self.joint_names = []
+        self.actuator_names = []
         
+        for leg in self.legs:
+            for link in self.links:
+                self.joint_names.append(f"{leg}_{link}_joint")
+                self.actuator_names.append(f"{leg}_{link}")
+        
+        # Mapear joints -> qpos addresses
         self.joint_ids = []
+        self.joint_qpos_addr = []
+        self.joint_qvel_addr = []
         self.joint_limits = []
         
-        for name in joint_names:
+        for name in self.joint_names:
             try:
                 joint_id = self.model.joint(name).id
                 self.joint_ids.append(joint_id)
+                self.joint_qpos_addr.append(self.model.jnt_qposadr[joint_id])
+                self.joint_qvel_addr.append(self.model.jnt_dofadr[joint_id])
                 
                 # Get joint limits from model
                 jnt_range = self.model.jnt_range[joint_id]
@@ -126,7 +134,26 @@ class Go2Env(gym.Env):
             except KeyError:
                 print(f"Warning: Joint {name} not found in model")
         
-        print(f"Found {len(self.joint_ids)} controllable joints")
+        # Mapear actuators -> ctrl indices (PODE SER ORDEM DIFERENTE!)
+        self.actuator_ids = []
+        for name in self.actuator_names:
+            try:
+                actuator_id = self.model.actuator(name).id
+                self.actuator_ids.append(actuator_id)
+            except KeyError:
+                print(f"Warning: Actuator {name} not found in model")
+        
+        # Debug: mostra o mapeamento
+        print(f"\n{'='*50}")
+        print("JOINT/ACTUATOR MAPPING:")
+        print(f"{'='*50}")
+        for i, (jname, aname) in enumerate(zip(self.joint_names, self.actuator_names)):
+            qpos = self.joint_qpos_addr[i]
+            ctrl = self.actuator_ids[i]
+            print(f"  [{i:2d}] {jname:20s} -> qpos[{qpos}], ctrl[{ctrl}]")
+        print(f"{'='*50}\n")
+        
+        print(f"Found {len(self.joint_ids)} joints, {len(self.actuator_ids)} actuators")
         
     def reset(self, seed=None, options=None):
         """Reset environment to initial state - robot on its back with legs tucked"""
@@ -171,9 +198,13 @@ class Go2Env(gym.Env):
             for i, (lower, upper) in enumerate(self.joint_limits):
                 joint_pos[i] = np.clip(joint_pos[i], lower, upper)
             
-            self.data.qpos[7:19] = joint_pos
+            # Set joint positions using correct mapping
+            for i, addr in enumerate(self.joint_qpos_addr):
+                self.data.qpos[addr] = joint_pos[i]
         else:
-            self.data.qpos[7:19] = tucked_config
+            # Set joint positions using correct mapping
+            for i, addr in enumerate(self.joint_qpos_addr):
+                self.data.qpos[addr] = tucked_config[i]
         
         # Zero velocities
         self.data.qvel[:] = 0
@@ -240,11 +271,11 @@ class Go2Env(gym.Env):
         Get 30-dimensional observation
         Paper Section II.B, Table I
         """
-        # Joint positions (12) - indices 0-11
-        joint_positions = self.data.qpos[7:19].copy()  # Skip base pose (7 values)
+        # Joint positions (12) - usando mapeamento correto!
+        joint_positions = np.array([self.data.qpos[addr] for addr in self.joint_qpos_addr])
         
-        # Joint velocities (12) - indices 12-23
-        joint_velocities = self.data.qvel[6:18].copy()  # Skip base velocity (6 values)
+        # Joint velocities (12) - usando mapeamento correto!
+        joint_velocities = np.array([self.data.qvel[addr] for addr in self.joint_qvel_addr])
         
         # Base orientation (3) - indices 24-26
         # Paper eq. (6): θ_B = R^-1 · g
@@ -369,18 +400,23 @@ class Go2Env(gym.Env):
         
     def _apply_pd_control(self, target_positions):
         """
-        Apply PD controller to reach target joint positions
-        Paper Fig. 1: Policy network outputs target positions to PD controller
+        Apply PD controller to reach target joint positions.
+        Uses correct joint/actuator mapping!
         """
         # PD gains from config
         kp = self.config.get('controller', {}).get('kp', 30.0)
         kd = self.config.get('controller', {}).get('kd', 5.0)
         max_torque = self.config.get('controller', {}).get('max_torque', 23.5)
         
-        for i, joint_id in enumerate(self.joint_ids):
-            # Current state
-            current_pos = self.data.qpos[7 + i]
-            current_vel = self.data.qvel[6 + i]
+        for i in range(12):
+            # Get correct addresses from mapping
+            qpos_addr = self.joint_qpos_addr[i]
+            qvel_addr = self.joint_qvel_addr[i]
+            actuator_id = self.actuator_ids[i]
+            
+            # Current state (using mapped addresses)
+            current_pos = self.data.qpos[qpos_addr]
+            current_vel = self.data.qvel[qvel_addr]
             
             # PD control
             error = target_positions[i] - current_pos
@@ -389,8 +425,8 @@ class Go2Env(gym.Env):
             # Clip torque to actuator limits
             torque = np.clip(torque, -max_torque, max_torque)
             
-            # Apply torque
-            self.data.ctrl[i] = torque
+            # Apply torque to CORRECT actuator
+            self.data.ctrl[actuator_id] = torque
             
     def _compute_reward(self, obs, action):
         """

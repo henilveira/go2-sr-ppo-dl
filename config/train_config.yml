@@ -72,28 +72,21 @@ controller:
 reward:
   weights:
     # Always active rewards
-    w1: 0.5 # R_h: Height reward
-    w2: 0.5 # R_g: Orientation reward
-
+    w1: 0.3 # R_h: Height reward
+    w2: 0.3 # R_g: Orientation reward
     # Curriculum rewards (only when R_g > threshold)
     w3: 0.3 # R_h_cl: Height reward again
-    w4: 0.3 # R_jp: Joint position reward
-    w5: 0.2 # R_fc: Foot contact reward
-
+    w4: 0.6 # R_jp: Joint position reward
+    w5: 0.1 # R_fc: Foot contact reward
     # Smoothness/regularization - INCREASED to penalize jerky movements
-    w6: 0.6 # R_ad: Action difference (HIGH - smooth actions)
-    w7: 0.3 # R_v: Joint velocity cost (penalize fast joint movements)
-    w8: 0.2 # R_vb: Base linear velocity cost
-
-  # Curriculum learning
+    w6: 0.05 # R_ad: Action difference (HIGH - smooth actions)
+    w7: 0.005 # R_v: Joint velocity cost (penalize fast joint movements)
+    w8: 0.05   # R_vb: Base linear velocity 
   curriculum:
     enabled: true
-    orientation_threshold: 0.4 # LOWERED - activate curriculum earlier
+    orientation_threshold: 0.4
 
-# ==================== PPO HYPERPARAMETERS ====================
-# Paper Table IV - with INCREASED exploration
 ppo:
-  # Paper Table IV - original hyperparameters
   batch_size: 32
   learning_rate: 3.3e-4
   gamma: 0.97
@@ -104,55 +97,29 @@ ppo:
   n_steps: 1024
   n_epochs: 10
   clip_range: 0.2
-
-  # Network architecture (paper: 256-256-16 with ReLU)
   policy_kwargs:
     net_arch: [256, 256, 16]
     activation_fn: "relu"
 
   verbose: 1
   tensorboard_log: "./logs/"
-
-# ==================== TRAINING ====================
-# Paper: "300 episodes in 12 parallel environments"
 training:
-  # Parallel environments - reduced for stability during debugging
-  num_parallel_envs: 8
-
-  # Episode settings - SHORTER episodes for faster learning signal
+  num_parallel_envs: 12
   max_episode_steps: 512
-
-  # Initial conditions (paper: "dropped from 0.5 meters")
   drop_height: 0.5
   random_orientation: true
   random_joint_positions: true
-
-  # Training duration
   total_episodes: 300
-  # Paper: 300 × 1024 × 12 = 3.7M timesteps minimum
-  total_timesteps: 1_000_000 # Start with 2M, increase if needed
-
-  # Checkpointing
+  total_timesteps: 2_686_400
   save_freq: 100_000
-  eval_freq: 25_000 # More frequent eval to track progress
+  eval_freq: 25_000
   n_eval_episodes: 10
-  log_interval: 5 # More frequent logging
-
-# ==================== SIMULATION ====================
+  log_interval: 5
+  
 simulation:
   engine: "mujoco"
-
-  # Physics timestep
-  # MuJoCo default: 0.002s (500 Hz)
-  # Control freq: 50 Hz (from n_steps=1024 per episode)
-  # So n_substeps = 500/50 = 10
-  n_substeps: 10
-
-  # Termination
-  # Paper: "only termination condition was max steps"
+  n_substeps: 10  
   early_termination: false
-
-# ==================== PATHS ====================
 paths:
   checkpoints: "./checkpoints/"
   logs: "./logs/"

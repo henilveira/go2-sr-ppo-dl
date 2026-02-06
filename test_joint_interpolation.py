@@ -75,6 +75,38 @@ def main():
     print(f"dyn_dt: {dyn_dt}s (physics) | con_dt: {con_dt}s (control) | n_substeps: {n_substeps}")
     
     # ============================================================
+    # JOINT/ACTUATOR MAPPING (mesmo que go2_env.py)
+    # ============================================================
+    legs = ['FR', 'FL', 'RR', 'RL']
+    links = ['hip', 'thigh', 'calf']
+    
+    joint_names = []
+    actuator_names = []
+    for leg in legs:
+        for link in links:
+            joint_names.append(f"{leg}_{link}_joint")
+            actuator_names.append(f"{leg}_{link}")
+    
+    # Map joints -> qpos/qvel addresses
+    joint_qpos_addr = []
+    joint_qvel_addr = []
+    for name in joint_names:
+        joint_id = model.joint(name).id
+        joint_qpos_addr.append(model.jnt_qposadr[joint_id])
+        joint_qvel_addr.append(model.jnt_dofadr[joint_id])
+    
+    # Map actuators -> ctrl indices
+    actuator_ids = []
+    for name in actuator_names:
+        actuator_ids.append(model.actuator(name).id)
+    
+    print("\nJOINT/ACTUATOR MAPPING:")
+    for i, (jname, aname) in enumerate(zip(joint_names, actuator_names)):
+        qpos = joint_qpos_addr[i]
+        ctrl = actuator_ids[i]
+        print(f"  [{i:2d}] {jname:20s} -> qpos[{qpos}], ctrl[{ctrl}]")
+    
+    # ============================================================
     # JOINT CONFIGURATIONS
     # Go2 joints order: [FR_hip, FR_thigh, FR_calf, FL_hip, FL_thigh, FL_calf,
     #                    RR_hip, RR_thigh, RR_calf, RL_hip, RL_thigh, RL_calf]
@@ -120,17 +152,22 @@ def main():
     
     interpolation_duration = 2.0  # seconds
     hold_duration = 2.0  # seconds to hold final position
+    warmup_duration = 0.5  # seconds to stabilize before interpolating
     
-    # PD gains - aumentados para compensar gravidade e contato!
-    kp = 150.0   # Position gain (era 40, muito fraco)
-    kd = 8.0     # Velocity gain (damping)
+    # PD gains - balanceados
+    kp = 80.0    # Position gain (não muito alto para evitar explosão)
+    kd = 5.0     # Velocity gain (damping)
     max_torque = 23.5  # Go2 limit
     
     # Initialize
     mujoco.mj_resetData(model, data)
     data.qpos[0:3] = [0, 0, initial_height]
     data.qpos[3:7] = initial_quat
-    data.qpos[7:19] = start_config
+    
+    # Set joint positions using correct mapping
+    for i, addr in enumerate(joint_qpos_addr):
+        data.qpos[addr] = start_config[i]
+    
     mujoco.mj_forward(model, data)
     
     print("=" * 50)
@@ -143,40 +180,65 @@ def main():
     
     # Launch viewer
     with mujoco.viewer.launch_passive(model, data) as viewer:
-        start_time = time.time()
-        sim_time = 0.0  # Track simulation time separately
+        sim_time = 0.0
+        actual_start_config = None  # Será capturado após warmup
         
         while viewer.is_running():
-            # Use simulation time for interpolation (more accurate than wall clock)
             elapsed = sim_time
             
-            # Calculate interpolation progress
-            if elapsed < interpolation_duration:
-                # Interpolating
-                t = elapsed / interpolation_duration
+            # ============================================================
+            # FASES: WARMUP -> INTERPOLATING -> HOLDING -> RESTART
+            # ============================================================
+            if elapsed < warmup_duration:
+                # WARMUP: Manter posição atual (onde o robô está agora)
+                # Deixa estabilizar antes de começar
+                target_joints = np.array([data.qpos[addr] for addr in joint_qpos_addr])
+                phase = "WARMUP"
+                current_kp = kp * (elapsed / warmup_duration)  # Ramp up gradualmente
+                
+            elif elapsed < warmup_duration + interpolation_duration:
+                # Captura posição atual como start no primeiro frame de interpolação
+                if actual_start_config is None:
+                    actual_start_config = np.array([data.qpos[addr] for addr in joint_qpos_addr])
+                    print(f"\n\nActual start captured: {actual_start_config}")
+                
+                # INTERPOLATING: Mover de posição atual para end
+                t = (elapsed - warmup_duration) / interpolation_duration
                 t_smooth = smooth_interpolate(t)
-                target_joints = interpolate_joints(start_config, end_config, t_smooth)
+                target_joints = interpolate_joints(actual_start_config, end_config, t_smooth)
                 phase = "INTERPOLATING"
-            elif elapsed < interpolation_duration + hold_duration:
-                # Holding final position
+                current_kp = kp
+                
+            elif elapsed < warmup_duration + interpolation_duration + hold_duration:
+                # HOLDING: Manter posição final
                 target_joints = end_config
                 phase = "HOLDING"
+                current_kp = kp
+                
             else:
-                # Loop back to start
+                # RESTART: Volta pro início
                 sim_time = 0.0
-                target_joints = start_config
+                actual_start_config = None  # Reset para capturar novamente
+                # Reset positions
+                for i, addr in enumerate(joint_qpos_addr):
+                    data.qpos[addr] = start_config[i]
+                mujoco.mj_forward(model, data)
                 phase = "RESTART"
                 continue
             
-            # Apply PD control to reach target (this is the "control" part)
+            # Apply PD control to reach target (using correct mapping!)
             for i in range(12):
-                current_pos = data.qpos[7 + i]
-                current_vel = data.qvel[6 + i]
+                qpos_addr = joint_qpos_addr[i]
+                qvel_addr = joint_qvel_addr[i]
+                actuator_id = actuator_ids[i]
+                
+                current_pos = data.qpos[qpos_addr]
+                current_vel = data.qvel[qvel_addr]
                 
                 error = target_joints[i] - current_pos
-                torque = kp * error - kd * current_vel
+                torque = current_kp * error - kd * current_vel
                 torque = np.clip(torque, -max_torque, max_torque)
-                data.ctrl[i] = torque
+                data.ctrl[actuator_id] = torque
             
             # Run n_substeps of physics simulation (this is the "dynamics" part)
             for _ in range(n_substeps):
@@ -191,7 +253,8 @@ def main():
             # Print status periodically
             if int(elapsed * 10) % 5 == 0:
                 base_height = data.qpos[2]
-                print(f"\r[{phase:12s}] t={elapsed:.1f}s | Height: {base_height:.3f}m", end="")
+                max_ctrl = np.max(np.abs(data.ctrl))
+                print(f"\r[{phase:12s}] t={elapsed:.1f}s | Height: {base_height:.3f}m | Max torque: {max_ctrl:.1f}", end="")
             
             # Sleep to maintain realtime (sleep for con_dt to match control frequency)
             time.sleep(con_dt)
