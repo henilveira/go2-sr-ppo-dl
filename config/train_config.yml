@@ -55,16 +55,17 @@ action:
   size: 12
   type: "continuous"
   range: [-1.0, 1.0] # Normalized, then rescaled to joint limits
-  smoothing: 0.3 # EMA smoothing in env step() - slightly reduced for responsiveness
+  smoothing: 0.35 # REDUCED - allows faster, more explosive movements for rolling
   scale: 1.0 # FULL joint range - robot needs full motion to flip over
 
 # ==================== PD CONTROLLER ====================
 # Paper Fig. 1: Policy outputs target positions to PD controller
 controller:
   type: "pd"
-  kp: 30.0 # Position gain - Lower for smoother control
-  kd: 5.0 # Derivative gain - Higher for damping oscillations
-  max_torque: 23.5 # Nm - Go2 actuator limit
+  kp: 60.0 # Position gain - HIGH for explosive roll movements
+  kd: 6.5 # Derivative gain - LOWER to allow faster motion
+  # max_torque removed - now uses MuJoCo model limits per actuator
+  # Hip/Thigh: 23.7 Nm, Knee(calf): 45.43 Nm
 
 # ==================== REWARD FUNCTION ====================
 # Paper Table II & III, Eq. (9)
@@ -110,7 +111,7 @@ training:
   random_orientation: true
   random_joint_positions: true
   total_episodes: 300
-  total_timesteps: 2_686_400
+  total_timesteps: 2_500_400
   save_freq: 100_000
   eval_freq: 25_000
   n_eval_episodes: 10

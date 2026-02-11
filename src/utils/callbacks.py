@@ -3,6 +3,7 @@ Custom callbacks for training monitoring
 """
 
 import numpy as np
+import time
 from stable_baselines3.common.callbacks import BaseCallback
 
 
@@ -79,3 +80,93 @@ class CurriculumMonitorCallback(BaseCallback):
             
             # Clear for next period
             self.curriculum_activations = []
+
+
+class TensorBoardMetricsCallback(BaseCallback):
+    """
+    Log custom metrics to TensorBoard during training
+    - Training time (wall clock)
+    - Steps per second (SPS)
+    - Custom environment metrics
+    """
+    
+    def __init__(self, log_freq=1000, verbose=0):
+        super().__init__(verbose)
+        self.log_freq = log_freq  # Log every N steps
+        self.start_time = None
+        self.last_log_time = None
+        self.last_log_step = 0
+        
+    def _on_training_start(self) -> None:
+        """Called before the first step"""
+        self.start_time = time.time()
+        self.last_log_time = self.start_time
+        self.last_log_step = 0
+    
+    def _on_step(self) -> bool:
+        """Called at every step"""
+        
+        # Log periodically
+        if self.num_timesteps % self.log_freq == 0:
+            current_time = time.time()
+            
+            # ==================== TIME METRICS ====================
+            # Total training time (hours)
+            total_time = (current_time - self.start_time) / 3600
+            self.logger.record("time/total_hours", total_time)
+            
+            # Time since last log (minutes)
+            time_delta = (current_time - self.last_log_time) / 60
+            self.logger.record("time/delta_minutes", time_delta)
+            
+            # Steps per second (recent)
+            steps_delta = self.num_timesteps - self.last_log_step
+            sps = steps_delta / (current_time - self.last_log_time) if current_time > self.last_log_time else 0
+            self.logger.record("time/steps_per_second", sps)
+            
+            # ==================== EPISODE METRICS ====================
+            if len(self.model.ep_info_buffer) > 0:
+                ep_rewards = [ep_info["r"] for ep_info in self.model.ep_info_buffer]
+                ep_lengths = [ep_info["l"] for ep_info in self.model.ep_info_buffer]
+                
+                # Reward statistics
+                self.logger.record("rollout/ep_rew_std", np.std(ep_rewards))
+                self.logger.record("rollout/ep_rew_min", np.min(ep_rewards))
+                self.logger.record("rollout/ep_rew_max", np.max(ep_rewards))
+                
+                # Episode length statistics
+                self.logger.record("rollout/ep_len_std", np.std(ep_lengths))
+                
+            # ==================== ENVIRONMENT METRICS ====================
+            # Extract custom metrics from info dict (if available)
+            if hasattr(self.locals, 'infos') and self.locals['infos']:
+                heights = []
+                orientations = []
+                success_flags = []
+                
+                for info in self.locals['infos']:
+                    if 'base_height' in info:
+                        heights.append(info['base_height'])
+                    if 'orientation_error' in info:
+                        orientations.append(info['orientation_error'])
+                    if 'reward_breakdown' in info:
+                        rb = info['reward_breakdown']
+                        if 'curriculum_active' in rb:
+                            success_flags.append(rb['curriculum_active'])
+                
+                # Log environment-specific metrics
+                if len(heights) > 0:
+                    self.logger.record("env/mean_height", np.mean(heights))
+                    self.logger.record("env/max_height", np.max(heights))
+                
+                if len(orientations) > 0:
+                    self.logger.record("env/mean_orientation_error", np.mean(orientations))
+                
+                if len(success_flags) > 0:
+                    self.logger.record("env/curriculum_activation_rate", np.mean(success_flags))
+            
+            # Update last log time
+            self.last_log_time = current_time
+            self.last_log_step = self.num_timesteps
+        
+        return True

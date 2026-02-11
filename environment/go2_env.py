@@ -402,11 +402,11 @@ class Go2Env(gym.Env):
         """
         Apply PD controller to reach target joint positions.
         Uses correct joint/actuator mapping!
+        Now respects per-joint torque limits from MuJoCo model.
         """
         # PD gains from config
-        kp = self.config.get('controller', {}).get('kp', 30.0)
+        kp = self.config.get('controller', {}).get('kp', 40.0)
         kd = self.config.get('controller', {}).get('kd', 5.0)
-        max_torque = self.config.get('controller', {}).get('max_torque', 23.5)
         
         for i in range(12):
             # Get correct addresses from mapping
@@ -421,6 +421,11 @@ class Go2Env(gym.Env):
             # PD control
             error = target_positions[i] - current_pos
             torque = kp * error - kd * current_vel
+            
+            # Get actuator-specific torque limits from MuJoCo model
+            # Hip/Thigh: ±23.7 Nm, Knee(calf): ±45.43 Nm
+            ctrl_range = self.model.actuator_ctrlrange[actuator_id]
+            max_torque = ctrl_range[1]  # Upper limit (symmetric)
             
             # Clip torque to actuator limits
             torque = np.clip(torque, -max_torque, max_torque)

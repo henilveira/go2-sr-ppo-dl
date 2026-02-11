@@ -23,7 +23,7 @@ from stable_baselines3.common.monitor import Monitor
 import torch
 
 from environment.go2_env import Go2Env
-from src.utils.callbacks import RewardLoggerCallback, CurriculumMonitorCallback
+from src.utils.callbacks import RewardLoggerCallback, CurriculumMonitorCallback, TensorBoardMetricsCallback
 
 
 def load_config():
@@ -71,8 +71,8 @@ def train():
     print("   ✓ Config loaded")
     
     # Create output directory
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_name = f"go2_self_recovery_{timestamp}"
+    timestamp = datetime.now().strftime("%d-%m-%Y_%H:%M:%S")
+    run_name = f"go2_{timestamp}"
     output_dir = project_root / "logs" / run_name
     output_dir.mkdir(parents=True, exist_ok=True)
     print(f"   ✓ Output directory: {output_dir}")
@@ -104,6 +104,9 @@ def train():
     # Curriculum monitor
     curriculum_monitor = CurriculumMonitorCallback(log_freq=100)
     
+    # TensorBoard metrics - log custom metrics (time, SPS, etc.)
+    tensorboard_callback = TensorBoardMetricsCallback(log_freq=1000)  # Every 1k steps
+    
     # Checkpoint callback - save model every N steps
     checkpoint_callback = CheckpointCallback(
         save_freq=config['training']['save_freq'] // n_envs,
@@ -124,7 +127,8 @@ def train():
     
     callback_list = CallbackList([
         reward_logger, 
-        curriculum_monitor, 
+        curriculum_monitor,
+        tensorboard_callback,  # Add TensorBoard metrics
         checkpoint_callback, 
         eval_callback
     ])

@@ -1,29 +1,22 @@
 <mujoco model="go2 scene">
-  <include file="go2.xml"/>
+  <include file="go2.xml" />
 
-  <statistic center="0 0 0.1" extent="0.8"/>
+  <statistic center="0 0 0.1" extent="0.8" />
 
   <visual>
-    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
-    <rgba haze="0.15 0.25 0.35 1"/>
-    <global azimuth="-130" elevation="-20"/>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0" />
+    <rgba haze="0.15 0.25 0.35 1" />
+    <global azimuth="-130" elevation="-20" />
   </visual>
 
   <asset>
-    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
-    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3"
-      markrgb="0.8 0.8 0.8" width="300" height="300"/>
-    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
-  </asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072" />
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8" width="300" height="300" />
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2" />
+  <hfield name="perlin_hfield_1" size="1.5 1.5 0.2 0.2" file="../height_field_1.png" /><hfield name="perlin_hfield_0" size="1.5 1.5 0.2 0.2" file="../height_field_0.png" /></asset>
 
   <worldbody>
-    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
-    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"
-    condim="3" 
-          friction="0.8 0.02 0.05"         
-          solref="0.02 1"                  
-          solimp="0.9 0.95 0.005"          
-          margin="0.001"                   
-          gap="0.0"/>   
-  </worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true" />
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane" />
+  <geom pos="0 0 -0.025" type="box" size="1.5 1.5 0.05" quat="1.0 0.0 0.0 0.0" /><geom type="hfield" hfield="perlin_hfield_1" pos="0 3 0" quat="1.0 0.0 0.0 0.0" /><geom pos="3.25 0 0.08073361412148726" type="box" size="1.5 1.5 0.05" quat="0.9990482215818578 0.0 -0.043619387365336 0.0" /><geom type="hfield" hfield="perlin_hfield_0" pos="3.25 3 0.08073361412148726" quat="0.9990482215818578 0.0 -0.043619387365336 0.0" /></worldbody>
 </mujoco>
