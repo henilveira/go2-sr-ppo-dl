@@ -6,3 +6,4 @@ numpy
 pyyaml
 tensorboard
 optuna
+cma

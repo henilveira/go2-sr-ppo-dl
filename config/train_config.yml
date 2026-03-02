@@ -18,7 +18,7 @@ robot:
   # Heights (from paper Fig. 3)
   # Note: Go2 dimensions may differ slightly from A1
   max_height: 0.34 # Paper: "0.34 meter is the max height"
-  target_height: 0.31 # Paper: "threshold at 0.31 meter"
+  target_height: 0.27 # Paper: "threshold at 0.31 meter"
 
 # ==================== OBSERVATION SPACE ====================
 # Paper Table I: 30-dimensional observation
@@ -101,9 +101,64 @@ ppo:
   policy_kwargs:
     net_arch: [256, 256, 16]
     activation_fn: "relu"
-
   verbose: 1
   tensorboard_log: "./logs/"
+
+sac:
+  batch_size: 32
+  learning_rate: 3.3e-4
+  gamma: 0.97
+  ent_coef: 2.0e-5
+  gae_lambda: 0.95
+  vf_coef: 0.3
+  max_grad_norm: 0.7
+  n_steps: 1024
+  n_epochs: 10
+  clip_range: 0.2
+  policy_kwargs:
+    net_arch: [256, 256, 16]
+    activation_fn: "relu"
+  verbose: 1
+  tensorboard_log: "./logs/"
+
+# ==================== CMA-ES CONFIGURATION ====================
+# Covariance Matrix Adaptation Evolution Strategy
+# Evolves neural network weights directly (gradient-free)
+cma_es:
+  # Population size per generation (lambda)
+  # Larger = better exploration but slower per generation
+  population_size: 64
+
+  # Number of episodes to evaluate each candidate
+  # More episodes = more robust fitness estimate but slower
+  n_eval_episodes: 3
+
+  # Maximum number of generations
+  max_generations: 500
+
+  # Initial step size (standard deviation)
+  # Larger = more exploration at start
+  sigma0: 0.5
+
+  # Neural network hidden layer sizes
+  hidden_sizes: [128, 128]
+
+  # Save checkpoint every N generations
+  save_freq: 10
+
+  # Number of parallel workers for evaluation (1 = sequential)
+  num_workers: 1
+
+  # Stop early if reward exceeds this (null = no early stopping)
+  target_reward: null
+
+  # Random seed for reproducibility
+  seed: 42
+
+  # Parameter bounds (null = unbounded)
+  # param_bounds: [-5.0, 5.0]
+
+
 training:
   num_parallel_envs: 12
   max_episode_steps: 512

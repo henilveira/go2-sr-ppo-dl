@@ -146,7 +146,7 @@ def objective(trial):
     
     # PD Controller gains
     kp = trial.suggest_float('kp', 25.0, 70.0, step=5.0)
-    kd = trial.suggest_float('kd', 2.0, 8.0, step=0.5)
+    kd = trial.suggest_float('kd', 1.0, 8.0, step=0.5)
     
     # Action smoothing
     smoothing = trial.suggest_float('smoothing', 0.0, 0.4, step=0.05)
