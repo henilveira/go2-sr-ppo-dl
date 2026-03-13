@@ -508,7 +508,14 @@ def objective(trial, model_name, timesteps_override=None):
     trial_start_time = time.time()
     
     n_total_trials = trial.study.user_attrs.get('n_trials', '?')
-    best_so_far = trial.study.best_value if len(trial.study.trials) > 1 and trial.study.best_value != float('-inf') else None
+    completed_trials = trial.study.get_trials(
+        deepcopy=False,
+        states=(optuna.trial.TrialState.COMPLETE,),
+    )
+    best_so_far = None
+    if completed_trials:
+        # Safe in parallel mode: only read best_value when at least one trial completed.
+        best_so_far = trial.study.best_value
     
     print(f"\n{'='*70}")
     if best_so_far is not None:
@@ -532,19 +539,30 @@ def objective(trial, model_name, timesteps_override=None):
     # TRAIN MODEL (shorter training for HPO)
     # ============================================================
     
+    # In parallel Optuna runs, avoid nested multiprocessing (SubprocVecEnv)
+    # because MuJoCo + threaded trials can become unstable on macOS.
+    n_parallel_jobs = int(trial.study.user_attrs.get('n_jobs', 1))
+    is_parallel_optimization = n_parallel_jobs > 1
+
     # Use model-appropriate env count and derive timesteps from config
     n_envs = 8 if model_name == "ppo" else 2
+    if is_parallel_optimization:
+        n_envs = 1
     train_timesteps = calculate_total_timesteps(config, model_name, n_envs, timesteps_override)
     
     print(f"\n  Training for {train_timesteps:,} timesteps with {n_envs} envs...")
     
     # Create training env
-    try:
-        env = SubprocVecEnv([make_env(config, i) for i in range(n_envs)])
-    except Exception as e:
-        print(f"  ⚠ Failed to create SubprocVecEnv: {e}")
-        print(f"  Falling back to DummyVecEnv...")
+    if is_parallel_optimization:
+        print("  Parallel trials detected: using DummyVecEnv for stability")
         env = DummyVecEnv([make_env(config, i) for i in range(n_envs)])
+    else:
+        try:
+            env = SubprocVecEnv([make_env(config, i) for i in range(n_envs)])
+        except Exception as e:
+            print(f"  ⚠ Failed to create SubprocVecEnv: {e}")
+            print(f"  Falling back to DummyVecEnv...")
+            env = DummyVecEnv([make_env(config, i) for i in range(n_envs)])
     
     # Create eval env
     eval_env = DummyVecEnv([make_env(config, 0)])
@@ -689,6 +707,7 @@ def run_optimization(n_trials=30, n_jobs=1, model_name="ppo", timesteps_override
     
     # Store n_trials for progress tracking
     study.set_user_attr('n_trials', n_trials)
+    study.set_user_attr('n_jobs', n_jobs)
     
     # Create progress callback (only for sequential runs)
     callbacks = []
