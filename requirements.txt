@@ -3,6 +3,7 @@ mujoco
 stable-baselines3
 torch
 numpy
+matplotlib
 pyyaml
 tensorboard
 optuna
