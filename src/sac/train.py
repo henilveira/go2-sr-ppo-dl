@@ -1,5 +1,5 @@
 """
-Train PPO agent for Go2 self-recovery
+Train SAC agent for Go2 self-recovery
 Based on paper: "Self-Recovery of Quadrupedal Robot Using DRL" (2024)
 """
 
@@ -45,7 +45,7 @@ def make_env(config, rank=0):
                 'random_joint_positions': True,
                 'max_episode_steps': 1024
             }
-        
+
         if 'simulation' not in config:
             config['simulation'] = {
                 'n_substeps': 5
@@ -57,23 +57,30 @@ def make_env(config, rank=0):
     return _init
 
 
+ACTIVATION_FNS = {
+    "relu": torch.nn.ReLU,
+    "tanh": torch.nn.Tanh,
+    "elu": torch.nn.ELU,
+}
+
+
 def train():
     """Main training function"""
     
     print("=" * 70)
-    print("PPO Training - Go2 Self-Recovery")
+    print("SAC Training - Go2 Self-Recovery")
     print("=" * 70)
     
     # Load config
     print("\n1. Loading configuration...")
     config = load_config()
-    ppo_config = config['ppo']
+    sac_config = config['sac']
     print("   ✓ Config loaded")
     
     # Create output directory
     timestamp = datetime.now().strftime("%d-%m-%Y_%H:%M:%S")
     run_name = f"go2_{timestamp}"
-    output_dir = project_root / "logs" / run_name
+    output_dir = project_root / "logs" / "sac" / run_name
     output_dir.mkdir(parents=True, exist_ok=True)
     print(f"   ✓ Output directory: {output_dir}")
     
@@ -81,14 +88,19 @@ def train():
     with open(output_dir / "config.yml", 'w') as f:
         yaml.dump(config, f)
     
-    # Create vectorized environments (parallel training)
-    print("\n2. Creating environments...")
-    n_envs = config.get('training', {}).get('num_parallel_envs', 12)
-    print(f"   Creating {n_envs} parallel environments...")
+    # Create environments
+    # SAC is off-policy so fewer parallel envs are typical; use 1 for standard training
+    print("\n2. Creating environment...")
+    n_envs = config.get('training', {}).get('num_parallel_envs', 1)
+    # SAC works best with a single env or a small number
+    n_envs = min(n_envs, 4)
+    print(f"   Creating {n_envs} parallel environment(s)...")
     
-    # Use SubprocVecEnv for true parallelism (faster)
-    env = SubprocVecEnv([make_env(config, i) for i in range(n_envs)])
-    print("   ✓ Environments created")
+    if n_envs > 1:
+        env = SubprocVecEnv([make_env(config, i) for i in range(n_envs)])
+    else:
+        env = DummyVecEnv([make_env(config, 0)])
+    print("   ✓ Environment created")
     
     # Create eval environment
     print("\n3. Creating evaluation environment...")
@@ -98,28 +110,28 @@ def train():
     # Setup callbacks
     print("\n4. Setting up callbacks...")
     
-    # Reward logger - show stats in terminal
-    reward_logger = RewardLoggerCallback(log_freq=5)  # Log every 5 rollouts
+    # Reward logger
+    reward_logger = RewardLoggerCallback(log_freq=5)
     
     # Curriculum monitor
     curriculum_monitor = CurriculumMonitorCallback(log_freq=100)
     
-    # TensorBoard metrics - log custom metrics (time, SPS, etc.)
-    tensorboard_callback = TensorBoardMetricsCallback(log_freq=1000)  # Every 1k steps
+    # TensorBoard metrics
+    tensorboard_callback = TensorBoardMetricsCallback(log_freq=1000)
     
-    # Checkpoint callback - save model every N steps
+    # Checkpoint callback
     checkpoint_callback = CheckpointCallback(
-        save_freq=config['training']['save_freq'] // n_envs,
+        save_freq=max(config['training']['save_freq'] // n_envs, 1),
         save_path=str(output_dir / "checkpoints"),
-        name_prefix="ppo_go2"
+        name_prefix="sac_go2"
     )
     
-    # Evaluation callback - evaluate periodically
+    # Evaluation callback
     eval_callback = EvalCallback(
         eval_env,
         best_model_save_path=str(output_dir / "best_model"),
         log_path=str(output_dir / "eval_logs"),
-        eval_freq=config['training']['eval_freq'] // n_envs,
+        eval_freq=max(config['training']['eval_freq'] // n_envs, 1),
         n_eval_episodes=config['training']['n_eval_episodes'],
         deterministic=True,
         render=False
@@ -128,37 +140,60 @@ def train():
     callback_list = CallbackList([
         reward_logger, 
         curriculum_monitor,
-        tensorboard_callback,  # Add TensorBoard metrics
+        tensorboard_callback,
         checkpoint_callback, 
         eval_callback
     ])
     print("   ✓ Callbacks configured")
     
-    # Create PPO model
-    print("\n5. Creating PPO model...")
-    print(f"   Architecture: {ppo_config['policy_kwargs']['net_arch']}")
-    print(f"   Learning rate: {ppo_config['learning_rate']}")
+    # Resolve activation function
+    act_fn_name = sac_config['policy_kwargs'].get('activation_fn', 'relu')
+    activation_fn = ACTIVATION_FNS.get(act_fn_name, torch.nn.ReLU)
+    
+    # Resolve entropy coefficient (can be "auto" or a float)
+    ent_coef = sac_config['ent_coef']
+    if isinstance(ent_coef, str) and ent_coef == "auto":
+        ent_coef = "auto"
+    else:
+        ent_coef = float(ent_coef)
+    
+    # Resolve target entropy
+    target_entropy = sac_config.get('target_entropy', 'auto')
+    if isinstance(target_entropy, str) and target_entropy == "auto":
+        target_entropy = "auto"
+    else:
+        target_entropy = float(target_entropy)
+    
+    # Create SAC model
+    print("\n5. Creating SAC model...")
+    print(f"   Architecture: {sac_config['policy_kwargs']['net_arch']}")
+    print(f"   Learning rate: {sac_config['learning_rate']}")
+    print(f"   Buffer size: {sac_config['buffer_size']:,}")
+    print(f"   Batch size: {sac_config['batch_size']}")
+    print(f"   Tau: {sac_config['tau']}")
+    print(f"   Entropy coef: {ent_coef}")
     print(f"   Device: {'cuda' if torch.cuda.is_available() else 'cpu'}")
     
     model = SAC(
         "MlpPolicy",
         env,
-        learning_rate=ppo_config['learning_rate'],
-        n_steps=ppo_config['n_steps'],
-        batch_size=ppo_config['batch_size'],
-        n_epochs=ppo_config['n_epochs'],
-        gamma=ppo_config['gamma'],
-        gae_lambda=ppo_config['gae_lambda'],
-        clip_range=ppo_config['clip_range'],
-        ent_coef=ppo_config['ent_coef'],
-        vf_coef=ppo_config['vf_coef'],
-        max_grad_norm=ppo_config['max_grad_norm'],
+        learning_rate=sac_config['learning_rate'],
+        buffer_size=sac_config['buffer_size'],
+        learning_starts=sac_config['learning_starts'],
+        batch_size=sac_config['batch_size'],
+        tau=sac_config['tau'],
+        gamma=sac_config['gamma'],
+        train_freq=sac_config['train_freq'],
+        gradient_steps=sac_config['gradient_steps'],
+        ent_coef=ent_coef,
+        target_update_interval=sac_config['target_update_interval'],
+        target_entropy=target_entropy,
         policy_kwargs={
-            'net_arch': ppo_config['policy_kwargs']['net_arch'],
-            'activation_fn': torch.nn.ReLU
+            'net_arch': sac_config['policy_kwargs']['net_arch'],
+            'activation_fn': activation_fn,
         },
         tensorboard_log=str(output_dir / "tensorboard"),
-        verbose=1
+        verbose=1,
     )
     print("   ✓ Model created")
     
@@ -166,8 +201,7 @@ def train():
     total_timesteps = config['training']['total_timesteps']
     print(f"\n6. Starting training...")
     print(f"   Total timesteps: {total_timesteps:,}")
-    print(f"   Expected episodes: ~{total_timesteps // ppo_config['n_steps']:,}")
-    print(f"   Estimated time: ~{total_timesteps / (n_envs * 500):.0f} minutes")
+    print(f"   Learning starts after: {sac_config['learning_starts']:,} steps")
     print("\n" + "=" * 70)
     print("Training in progress... (Check TensorBoard for live metrics)")
     print(f"   tensorboard --logdir {output_dir / 'tensorboard'}")
@@ -178,7 +212,8 @@ def train():
         model.learn(
             total_timesteps=total_timesteps,
             callback=callback_list,
-            progress_bar=True
+            progress_bar=True,
+            log_interval=config['training'].get('log_interval', 4),
         )
         
         # Save final model
