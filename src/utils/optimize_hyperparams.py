@@ -111,6 +111,22 @@ def load_config():
     return config
 
 
+def get_ppo_config(config):
+    """Resolve PPO config profile while keeping backward compatibility."""
+    if 'ppo' in config:
+        return 'ppo', config['ppo']
+
+    profile_name = config.get('training', {}).get('ppo_profile', 'improved_ppo')
+    if profile_name not in config:
+        available_profiles = [key for key in config.keys() if key.endswith('_ppo')]
+        raise KeyError(
+            f"PPO profile '{profile_name}' not found in config. "
+            f"Available profiles: {available_profiles}"
+        )
+
+    return profile_name, config[profile_name]
+
+
 def make_env(config, rank=0):
     """Factory function to create environment"""
     def _init():
@@ -150,7 +166,8 @@ def calculate_total_timesteps(config, model_name, n_envs, timesteps_override=Non
 
     if model_name == 'ppo':
         # PPO should use a multiple of n_steps * n_envs for clean rollouts.
-        ppo_n_steps = int(config.get('ppo', {}).get('n_steps', 1024))
+        _, ppo_cfg = get_ppo_config(config)
+        ppo_n_steps = int(ppo_cfg.get('n_steps', 1024))
         rollout_block = max(ppo_n_steps * max(n_envs, 1), 1)
         return max(rollout_block, round(target / rollout_block) * rollout_block)
 
@@ -310,6 +327,7 @@ def apply_trial_hyperparameters(config, trial, model_name):
     trial_params = {}
 
     if model_name == 'ppo':
+        _, ppo_cfg = get_ppo_config(config)
         ppo_params = {
             'learning_rate': trial.suggest_float('learning_rate', 1e-5, 1e-3, log=True),
             'batch_size': trial.suggest_categorical('batch_size', [32, 64, 128, 256]),
@@ -321,7 +339,7 @@ def apply_trial_hyperparameters(config, trial, model_name):
             'max_grad_norm': trial.suggest_float('max_grad_norm', 0.3, 1.0),
             'n_epochs': trial.suggest_categorical('n_epochs', [5, 10, 15, 20]),
         }
-        config['ppo'].update(ppo_params)
+        ppo_cfg.update(ppo_params)
         trial_params['ppo'] = ppo_params
 
     if model_name == 'sac':
@@ -442,7 +460,8 @@ def create_model(model_name, config, env):
     model_name = model_name.lower()
 
     if model_name == "ppo":
-        ppo_config = config['ppo']
+        profile_name, ppo_config = get_ppo_config(config)
+        print(f"  Using PPO profile: {profile_name}")
         return PPO(
             "MlpPolicy",
             env,
@@ -686,7 +705,8 @@ def run_optimization(n_trials=30, n_jobs=1, model_name="ppo", timesteps_override
     if timesteps_override is not None:
         print("Formula: user-defined timestep budget")
     elif model_name.lower() == "ppo":
-        block = config['ppo']['n_steps'] * default_envs
+        _, ppo_cfg = get_ppo_config(config)
+        block = ppo_cfg['n_steps'] * default_envs
         print(f"Formula: nearest(2,500,400 / {block}) x {block} (rollout-aligned)")
     else:
         print("Formula: fixed target for HPO budget (~3.7M)")

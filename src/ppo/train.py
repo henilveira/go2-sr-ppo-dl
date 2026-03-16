@@ -34,6 +34,22 @@ def load_config():
     return config
 
 
+def get_ppo_config(config):
+    """Resolve PPO config profile while keeping backward compatibility."""
+    if 'ppo' in config:
+        return 'ppo', config['ppo']
+
+    profile_name = config.get('training', {}).get('ppo_profile', 'improved_ppo')
+    if profile_name not in config:
+        available_profiles = [key for key in config.keys() if key.endswith('_ppo')]
+        raise KeyError(
+            f"PPO profile '{profile_name}' not found in config. "
+            f"Available profiles: {available_profiles}"
+        )
+
+    return profile_name, config[profile_name]
+
+
 def make_env(config, rank=0):
     """Factory function to create a single environment"""
     def _init():
@@ -67,8 +83,9 @@ def train():
     # Load config
     print("\n1. Loading configuration...")
     config = load_config()
-    ppo_config = config['ppo']
+    ppo_profile, ppo_config = get_ppo_config(config)
     print("   ✓ Config loaded")
+    print(f"   ✓ PPO profile: {ppo_profile}")
     
     # Create output directory
     timestamp = datetime.now().strftime("%d-%m-%Y_%H:%M:%S")
@@ -163,7 +180,14 @@ def train():
     print("   ✓ Model created")
     
     # Training parameters
-    total_timesteps = config['training']['total_timesteps']
+    training_config = config.get('training', {})
+    total_timesteps = training_config.get(
+        'total_timesteps_ppo',
+        training_config.get('total_timesteps')
+    )
+    if total_timesteps is None:
+        raise KeyError("Missing training.total_timesteps_ppo (or legacy training.total_timesteps)")
+
     print(f"\n6. Starting training...")
     print(f"   Total timesteps: {total_timesteps:,}")
     print(f"   Expected episodes: ~{total_timesteps // ppo_config['n_steps']:,}")
