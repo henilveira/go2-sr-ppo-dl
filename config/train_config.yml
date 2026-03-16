@@ -105,14 +105,14 @@ ppo:
   tensorboard_log: "./logs/"
 
 sac:
-  learning_rate: 3.0e-4
+  learning_rate: 0.0004264682607738638
   buffer_size: 1000000
-  learning_starts: 10000
-  batch_size: 256
-  tau: 0.005
-  gamma: 0.99
-  train_freq: 1
-  gradient_steps: 1
+  learning_starts: 5000
+  batch_size: 128
+  tau: 0.00309583124658257
+  gamma: 0.9625674561710845
+  train_freq: 2
+  gradient_steps: 8
   ent_coef: "auto"
   target_update_interval: 1
   target_entropy: "auto"
