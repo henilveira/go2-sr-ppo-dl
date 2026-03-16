@@ -198,7 +198,7 @@ def train():
     print("   ✓ Model created")
     
     # Training parameters
-    total_timesteps = config['training']['total_timesteps']
+    total_timesteps = config['training']['total_timesteps_sac']
     print(f"\n6. Starting training...")
     print(f"   Total timesteps: {total_timesteps:,}")
     print(f"   Learning starts after: {sac_config['learning_starts']:,} steps")
