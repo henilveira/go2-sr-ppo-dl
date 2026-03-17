@@ -91,6 +91,8 @@ class TerrainCurriculumCallback(BaseCallback):
         self.log_freq = log_freq
         self.latest_progress = 0.0
         self.terrain_counts = {}
+        self.roughness_counts = {}
+        self.incline_counts = {}
 
     def _on_training_start(self) -> None:
         self.training_env.env_method("set_training_progress", 0.0)
@@ -101,17 +103,49 @@ class TerrainCurriculumCallback(BaseCallback):
 
         if hasattr(self.locals, 'infos') and self.locals['infos']:
             for info in self.locals['infos']:
+                # Legacy terrain mode tracking
                 terrain_mode = info.get('terrain_mode')
                 if terrain_mode is not None:
                     self.terrain_counts[terrain_mode] = self.terrain_counts.get(terrain_mode, 0) + 1
+                
+                # New dynamic terrain mode tracking
+                roughness = info.get('current_roughness')
+                if roughness is not None:
+                    self.roughness_counts[roughness] = self.roughness_counts.get(roughness, 0) + 1
+                
+                incline = info.get('current_pitch_deg')
+                if incline is not None:
+                    incline_key = f"{incline:.1f}°"
+                    self.incline_counts[incline_key] = self.incline_counts.get(incline_key, 0) + 1
 
         if self.num_timesteps % self.log_freq == 0:
             self.logger.record("curriculum/training_progress", self.latest_progress)
-            total = sum(self.terrain_counts.values())
-            if total > 0:
+            
+            # Log terrain statistics
+            total_terrain = sum(self.terrain_counts.values())
+            if total_terrain > 0:
                 for terrain_name, count in self.terrain_counts.items():
-                    self.logger.record(f"terrain/{terrain_name}_ratio", count / total)
-                self.terrain_counts = {}
+                    self.logger.record(f"terrain/{terrain_name}_ratio", count / total_terrain)
+            
+            # Log roughness statistics (new mode)
+            total_roughness = sum(self.roughness_counts.values())
+            if total_roughness > 0:
+                mean_roughness = sum(k * v for k, v in self.roughness_counts.items()) / total_roughness
+                self.logger.record("dynamic_terrain/mean_roughness", mean_roughness)
+                self.logger.record("dynamic_terrain/max_roughness_seen", max(self.roughness_counts.keys()))
+            
+            # Log incline statistics (new mode)
+            if len(self.incline_counts) > 0:
+                print(f"\n  [Terrain Curriculum] Progress: {self.latest_progress*100:.1f}%")
+                if total_roughness > 0:
+                    print(f"    Mean Roughness: {mean_roughness:.1f} / 10")
+                for incline_str, count in self.incline_counts.items():
+                    ratio = count / total_roughness if total_roughness > 0 else 0
+                    print(f"    Incline {incline_str}: {ratio*100:.1f}%")
+                self.incline_counts = {}
+            
+            self.terrain_counts = {}
+            self.roughness_counts = {}
 
         return True
 

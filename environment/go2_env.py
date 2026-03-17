@@ -10,6 +10,8 @@ import numpy as np
 import mujoco
 from pathlib import Path
 
+from environment.terrain import TerrainCurriculum
+
 
 class Go2Env(gym.Env):
     """
@@ -44,6 +46,15 @@ class Go2Env(gym.Env):
         self.training_progress = 0.0
         self.current_terrain = 'default'
         self.terrain_curriculum_config = self.config.get('terrain_curriculum', {})
+        
+        # Initialize terrain curriculum for dynamic generation
+        self.terrain_curriculum = TerrainCurriculum(num_roughness_levels=10)
+        self.current_roughness = 0
+        self.current_pitch_deg = 0.0
+        
+        # Cache for generated height fields to avoid regenerating each episode
+        self._hfield_cache = {}
+        self._cache_seed_offset = np.random.randint(0, 10000)
         
         # Define observation and action spaces
         self.observation_space = spaces.Box(
@@ -166,36 +177,47 @@ class Go2Env(gym.Env):
         print(f"Found {len(self.joint_ids)} joints, {len(self.actuator_ids)} actuators")
 
     def _sample_terrain_mode(self):
-        """Sample terrain according to curriculum stage unlocked by training progress."""
-        curriculum = self.terrain_curriculum_config
-        if not curriculum.get('enabled', False):
-            return curriculum.get('default_terrain', 'default')
-
-        stages = curriculum.get('stages', [])
-        if not stages:
-            return curriculum.get('default_terrain', 'default')
-
-        active_stage = stages[-1]
-        for stage in stages:
-            if self.training_progress <= stage.get('until_progress', 1.0):
-                active_stage = stage
-                break
-
-        weights = active_stage.get('weights', {'default': 1.0})
-        terrain_names = list(weights.keys())
-        probabilities = np.asarray(list(weights.values()), dtype=np.float64)
-        probabilities = probabilities / probabilities.sum()
-        return str(np.random.choice(terrain_names, p=probabilities))
+        """Sample terrain from dynamic curriculum based on training progress."""
+        # Use the terrain curriculum with 20 stages (10 roughness × 2 incline options)
+        terrain_config = self.terrain_curriculum.get_terrain_by_progress(self.training_progress)
+        
+        # Store current terrain parameters
+        self.current_terrain = terrain_config['name']
+        self.current_roughness = terrain_config['roughness_level']
+        self.current_pitch_deg = terrain_config['pitch_deg']
+        
+        return terrain_config
 
     def _place_robot_for_terrain(self, terrain_mode):
         """Place the robot over the selected terrain patch."""
-        spawn_map = {
-            'default': {'pos': [0.0, 0.0, 0.12], 'pitch_deg': 0.0, 'settle_steps': 100},
-            'inclined': {'pos': [3.25, 0.0, 0.42], 'pitch_deg': -10.0, 'settle_steps': 80},
-            'rocky': {'pos': [0.0, 3.0, 0.40], 'pitch_deg': 0.0, 'settle_steps': 80},
-            'rocky_inclined': {'pos': [3.25, 3.0, 0.48], 'pitch_deg': -10.0, 'settle_steps': 80},
-        }
-        spawn = spawn_map.get(terrain_mode, spawn_map['default'])
+        # Handle both old string-based and new dict-based terrain modes
+        if isinstance(terrain_mode, str):
+            # Legacy mode - keep old behavior for compatibility
+            spawn_map = {
+                'default': {'pos': [0.0, 0.0, 0.12], 'pitch_deg': 0.0, 'settle_steps': 100},
+                'inclined': {'pos': [3.25, 0.0, 0.42], 'pitch_deg': -10.0, 'settle_steps': 80},
+                'rocky': {'pos': [0.0, 3.0, 0.40], 'pitch_deg': 0.0, 'settle_steps': 80},
+                'rocky_inclined': {'pos': [3.25, 3.0, 0.48], 'pitch_deg': -10.0, 'settle_steps': 80},
+            }
+            spawn = spawn_map.get(terrain_mode, spawn_map['default'])
+        else:
+            # New mode - use dynamic terrain config dict
+            roughness = terrain_mode.get('roughness_level', 0)
+            pitch_deg = terrain_mode.get('pitch_deg', 0.0)
+            
+            # Generate or retrieve height field
+            self._update_terrain_heightfield(roughness)
+            
+            # Calculate spawn position based on pitch angle
+            # Adjust height to compensate for incline
+            pitch_rad = np.deg2rad(pitch_deg)
+            base_height = 0.12
+            z_adjust = 3.0 * abs(np.sin(pitch_rad))
+            spawn = {
+                'pos': [0.0, 0.0, base_height + z_adjust],
+                'pitch_deg': pitch_deg,
+                'settle_steps': 100,
+            }
 
         self.data.qpos[0:3] = spawn['pos']
 
@@ -239,6 +261,49 @@ class Go2Env(gym.Env):
             1.0,
         )
         return 0.7 * uprightness + 0.3 * height_ratio
+
+    def _update_terrain_heightfield(self, roughness_level: int):
+        """
+        Update the height field in the simulation based on roughness level.
+        Uses caching to avoid regenerating the same terrain multiple times.
+        
+        Args:
+            roughness_level: 0-10 for terrain roughness
+        """
+        from environment.terrain import generate_perlin_heightfield
+        
+        # Check cache
+        if roughness_level not in self._hfield_cache:
+            # Generate new height field
+            hfield_data = generate_perlin_heightfield(
+                width=128,
+                height=128,
+                roughness_level=roughness_level,
+                seed=roughness_level + self._cache_seed_offset,
+                scale_factor=0.8,  # 80% amplitude variation
+            )
+            
+            # Normalize to [-1, 1]
+            hfield_normalized = (hfield_data.astype(np.float32) / 255.0 - 0.5) * 2.0
+            self._hfield_cache[roughness_level] = hfield_normalized
+        else:
+            hfield_normalized = self._hfield_cache[roughness_level]
+        
+        # Update all height field geometries in the model
+        # MuJoCo stores height field data as a flat array
+        for hfield_id in range(len(self.model.hfield_size)):
+            # Get the address in nH array where this hfield data starts
+            hfield_addr = self.model.hfield_adr[hfield_id]
+            hfield_size = self.model.hfield_size[hfield_id]
+            
+            # Only update if we have explicit height fields (not default flat plane)
+            if hfield_size[0] > 0 and hfield_size[1] > 0:
+                # Reshape and copy the data
+                flat_size = int(hfield_size[0] * hfield_size[1])
+                if flat_size == hfield_normalized.size:
+                    # Copy the new height field data
+                    self.model.hfield_data[hfield_addr:hfield_addr + flat_size] = hfield_normalized.flatten()
+
 
     def _get_uprightness(self):
         """Return uprightness in [0, 1], where 1 means base is upright."""
@@ -549,6 +614,8 @@ class Go2Env(gym.Env):
             'best_recovery_score': self.best_recovery_score,
             'steps_since_progress': self.steps_since_progress,
             'terrain_mode': self.current_terrain,
+            'current_roughness': self.current_roughness,
+            'current_pitch_deg': self.current_pitch_deg,
             'step': self.step_count
         }
         

@@ -201,26 +201,13 @@ training:
 
 terrain_curriculum:
   enabled: true
-  default_terrain: "default"
-  stages:
-    - until_progress: 0.25
-      weights:
-        default: 1.0
-    - until_progress: 0.50
-      weights:
-        default: 0.7
-        inclined: 0.3
-    - until_progress: 0.75
-      weights:
-        default: 0.45
-        inclined: 0.30
-        rocky: 0.25
-    - until_progress: 1.00
-      weights:
-        default: 0.25
-        inclined: 0.25
-        rocky: 0.25
-        rocky_inclined: 0.25
+  mode: "dynamic_roughness"  # Use dynamic terrain generation with 20 phases
+  # Phase structure (auto-generated):
+  # Phases 0-1: Roughness 0 (smooth) - without/with incline
+  # Phases 2-3: Roughness 1 - without/with incline
+  # ... up to ...
+  # Phases 18-19: Roughness 9 (rough) - without/with incline
+  # Total 20 phases (10 roughness × 2 incline options)
   
 simulation:
   engine: "mujoco"
