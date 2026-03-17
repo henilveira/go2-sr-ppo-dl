@@ -192,14 +192,15 @@ def place_robot_for_terrain(env, terrain_mode, level=0):
     incline_deg = float(level + 1)
     incline_rad = np.deg2rad(incline_deg)
     incline_center_z = -0.05 + 1.5 * np.sin(incline_rad)
+    spawn_lift = 0.0
 
     spawn_map = {
-        "default": {"pos": [0.0, 0.0, 0.12], "pitch_deg": 0.0},
-        "flat": {"pos": [x_pos, 3.0, 0.40], "pitch_deg": 0.0},
-        "inclined": {"pos": [x_pos, 6.0, 0.24 + incline_center_z], "pitch_deg": -incline_deg},
+        "default": {"pos": [0.0, 0.0, 0.12 + spawn_lift], "pitch_deg": 0.0},
+        "flat": {"pos": [x_pos, 3.0, 0.40 + spawn_lift], "pitch_deg": 0.0},
+        "inclined": {"pos": [x_pos, 6.0, 0.24 + incline_center_z + spawn_lift], "pitch_deg": -incline_deg},
         # Backward-compatible aliases
-        "rocky": {"pos": [x_pos, 3.0, 0.40], "pitch_deg": 0.0},
-        "rocky_inclined": {"pos": [x_pos, 6.0, 0.24 + incline_center_z], "pitch_deg": -incline_deg},
+        "rocky": {"pos": [x_pos, 3.0, 0.40 + spawn_lift], "pitch_deg": 0.0},
+        "rocky_inclined": {"pos": [x_pos, 6.0, 0.24 + incline_center_z + spawn_lift], "pitch_deg": -incline_deg},
     }
 
     spawn = spawn_map.get(terrain_mode, spawn_map["default"])

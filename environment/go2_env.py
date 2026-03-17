@@ -77,6 +77,10 @@ class Go2Env(gym.Env):
         self.step_count = 0
         self.best_recovery_score = 0.0
         self.steps_since_progress = 0
+        self.spawn_retry_count = 0
+        self.spawn_is_valid = True
+        self.spawn_ncon = 0
+        self.spawn_deepest_penetration = 0.0
         
         # Action smoothing factor (0 = no smoothing, 1 = full smoothing)
         # Higher value = smoother but slower response
@@ -221,20 +225,24 @@ class Go2Env(gym.Env):
 
     def _place_robot_for_terrain(self, terrain_mode):
         """Place the robot over the selected terrain patch."""
+        spawn_lift = 0.0
         # Handle both old string-based and new dict-based terrain modes
         if isinstance(terrain_mode, str):
             # Legacy mode - keep old behavior for compatibility
             spawn_map = {
-                'default': {'pos': [0.0, 0.0, 0.12], 'pitch_deg': 0.0, 'settle_steps': 100},
-                'inclined': {'pos': [3.25, 0.0, 0.42], 'pitch_deg': -10.0, 'settle_steps': 80},
-                'rocky': {'pos': [0.0, 3.0, 0.40], 'pitch_deg': 0.0, 'settle_steps': 80},
-                'rocky_inclined': {'pos': [3.25, 3.0, 0.48], 'pitch_deg': -10.0, 'settle_steps': 80},
+                'default': {'pos': [0.0, 0.0, 0.12 + spawn_lift], 'pitch_deg': 0.0, 'settle_steps': 100},
+                'inclined': {'pos': [3.25, 0.0, 0.42 + spawn_lift], 'pitch_deg': -10.0, 'settle_steps': 80},
+                'rocky': {'pos': [0.0, 3.0, 0.40 + spawn_lift], 'pitch_deg': 0.0, 'settle_steps': 80},
+                'rocky_inclined': {'pos': [3.25, 3.0, 0.48 + spawn_lift], 'pitch_deg': -10.0, 'settle_steps': 80},
             }
             spawn = spawn_map.get(terrain_mode, spawn_map['default'])
         else:
             # New mode - use dynamic terrain config dict
             roughness = terrain_mode.get('roughness_level', 0)
             pitch_deg = terrain_mode.get('pitch_deg', 0.0)
+            jitter_xy = float(self.config.get('training', {}).get('spawn_xy_jitter', 0.35))
+            x_offset = np.random.uniform(-jitter_xy, jitter_xy)
+            y_offset = np.random.uniform(-jitter_xy, jitter_xy)
             
             # Generate or retrieve height field
             self._update_terrain_heightfield(roughness)
@@ -242,10 +250,10 @@ class Go2Env(gym.Env):
             # Calculate spawn position based on pitch angle
             # Adjust height to compensate for incline
             pitch_rad = np.deg2rad(pitch_deg)
-            base_height = 0.12
+            base_height = 0.12 + spawn_lift
             z_adjust = 3.0 * abs(np.sin(pitch_rad))
             spawn = {
-                'pos': [0.0, 0.0, base_height + z_adjust],
+                'pos': [x_offset, y_offset, base_height + z_adjust],
                 'pitch_deg': pitch_deg,
                 'settle_steps': 100,
             }
@@ -282,6 +290,33 @@ class Go2Env(gym.Env):
         for _ in range(spawn['settle_steps']):
             self.data.ctrl[:] = 0
             mujoco.mj_step(self.model, self.data)
+
+    def _spawn_contact_stats(self):
+        """Return contact count and deepest penetration (negative means overlap)."""
+        deepest_penetration = 0.0
+        ncon = int(self.data.ncon)
+        for i in range(ncon):
+            dist = float(self.data.contact[i].dist)
+            if dist < deepest_penetration:
+                deepest_penetration = dist
+        return ncon, deepest_penetration
+
+    def _is_valid_spawn_state(self):
+        """Return True when initial contact state is not overly penetrated/stuck."""
+        cfg = self.config.get('training', {})
+        max_penetration = float(cfg.get('spawn_max_penetration', 0.02))
+        max_contacts = int(cfg.get('spawn_max_contacts', 40))
+
+        ncon, deepest_penetration = self._spawn_contact_stats()
+        self.spawn_ncon = ncon
+        self.spawn_deepest_penetration = deepest_penetration
+
+        # Too many contacts or deep interpenetration are good proxies for stuck starts.
+        if ncon > max_contacts:
+            return False
+        if deepest_penetration < -max_penetration:
+            return False
+        return True
 
     def _compute_recovery_score(self):
         """Compute a scalar recovery score used for progress-based early stopping."""
@@ -370,7 +405,18 @@ class Go2Env(gym.Env):
         # ============================================================
         
         self.current_terrain = self._sample_terrain_mode()
-        self._place_robot_for_terrain(self.current_terrain)
+
+        max_spawn_retries = int(self.config.get('training', {}).get('max_spawn_retries', 6))
+        self.spawn_retry_count = 0
+        self.spawn_is_valid = False
+        for attempt in range(max_spawn_retries):
+            self._place_robot_for_terrain(self.current_terrain)
+            if self._is_valid_spawn_state():
+                self.spawn_retry_count = attempt
+                self.spawn_is_valid = True
+                break
+        if not self.spawn_is_valid:
+            self.spawn_retry_count = max_spawn_retries
         
         # Reset tracking variables
         self.prev_action = np.zeros(12)
@@ -647,6 +693,10 @@ class Go2Env(gym.Env):
             'terrain_mode': self.current_terrain,
             'current_roughness': self.current_roughness,
             'current_pitch_deg': self.current_pitch_deg,
+            'spawn_retry_count': self.spawn_retry_count,
+            'spawn_is_valid': float(self.spawn_is_valid),
+            'spawn_contacts': self.spawn_ncon,
+            'spawn_deepest_penetration': self.spawn_deepest_penetration,
             'step': self.step_count
         }
         

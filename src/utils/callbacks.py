@@ -213,6 +213,10 @@ class TensorBoardMetricsCallback(BaseCallback):
                 success_flags = []
                 recovery_scores = []
                 stagnation_steps = []
+                spawn_retries = []
+                spawn_valid_flags = []
+                spawn_contacts = []
+                spawn_penetrations = []
                 
                 for info in self.locals['infos']:
                     if 'base_height' in info:
@@ -223,6 +227,14 @@ class TensorBoardMetricsCallback(BaseCallback):
                         recovery_scores.append(info['recovery_score'])
                     if 'steps_since_progress' in info:
                         stagnation_steps.append(info['steps_since_progress'])
+                    if 'spawn_retry_count' in info:
+                        spawn_retries.append(info['spawn_retry_count'])
+                    if 'spawn_is_valid' in info:
+                        spawn_valid_flags.append(info['spawn_is_valid'])
+                    if 'spawn_contacts' in info:
+                        spawn_contacts.append(info['spawn_contacts'])
+                    if 'spawn_deepest_penetration' in info:
+                        spawn_penetrations.append(info['spawn_deepest_penetration'])
                     if 'reward_breakdown' in info:
                         rb = info['reward_breakdown']
                         if 'curriculum_active' in rb:
@@ -244,6 +256,19 @@ class TensorBoardMetricsCallback(BaseCallback):
                 
                 if len(success_flags) > 0:
                     self.logger.record("env/curriculum_activation_rate", np.mean(success_flags))
+
+                if len(spawn_retries) > 0:
+                    self.logger.record("spawn/mean_retries", np.mean(spawn_retries))
+                    self.logger.record("spawn/max_retries", np.max(spawn_retries))
+
+                if len(spawn_valid_flags) > 0:
+                    self.logger.record("spawn/valid_rate", np.mean(spawn_valid_flags))
+
+                if len(spawn_contacts) > 0:
+                    self.logger.record("spawn/mean_contacts", np.mean(spawn_contacts))
+
+                if len(spawn_penetrations) > 0:
+                    self.logger.record("spawn/min_contact_dist", np.min(spawn_penetrations))
             
             # Update last log time
             self.last_log_time = current_time

@@ -182,6 +182,10 @@ training:
   ppo_profile: "improved_ppo"
   num_parallel_envs: 12
   max_episode_steps: 512
+  max_spawn_retries: 6
+  spawn_xy_jitter: 0.35
+  spawn_max_penetration: 0.02
+  spawn_max_contacts: 40
   drop_height: 0.5
   random_orientation: true
   random_joint_positions: true
