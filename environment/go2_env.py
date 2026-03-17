@@ -177,16 +177,47 @@ class Go2Env(gym.Env):
         print(f"Found {len(self.joint_ids)} joints, {len(self.actuator_ids)} actuators")
 
     def _sample_terrain_mode(self):
-        """Sample terrain from dynamic curriculum based on training progress."""
-        # Use the terrain curriculum with 20 stages (10 roughness × 2 incline options)
-        terrain_config = self.terrain_curriculum.get_terrain_by_progress(self.training_progress)
-        
-        # Store current terrain parameters
-        self.current_terrain = terrain_config['name']
-        self.current_roughness = terrain_config['roughness_level']
-        self.current_pitch_deg = terrain_config['pitch_deg']
-        
-        return terrain_config
+        """Sample terrain from config-driven curriculum (dynamic or legacy staged)."""
+        curriculum = self.terrain_curriculum_config
+        if not curriculum.get('enabled', False):
+            terrain_name = curriculum.get('default_terrain', 'default')
+            self.current_terrain = terrain_name
+            self.current_roughness = 0
+            self.current_pitch_deg = 0.0
+            return terrain_name
+
+        mode = curriculum.get('mode', 'stages')
+        if mode == 'dynamic_roughness':
+            terrain_config = self.terrain_curriculum.get_terrain_by_progress(self.training_progress)
+            self.current_terrain = terrain_config['name']
+            self.current_roughness = terrain_config['roughness_level']
+            self.current_pitch_deg = terrain_config['pitch_deg']
+            return terrain_config
+
+        stages = curriculum.get('stages', [])
+        if not stages:
+            terrain_name = curriculum.get('default_terrain', 'default')
+            self.current_terrain = terrain_name
+            self.current_roughness = 0
+            self.current_pitch_deg = 0.0
+            return terrain_name
+
+        active_stage = stages[-1]
+        for stage in stages:
+            if self.training_progress <= stage.get('until_progress', 1.0):
+                active_stage = stage
+                break
+
+        weights = active_stage.get('weights', {'default': 1.0})
+        terrain_names = list(weights.keys())
+        probabilities = np.asarray(list(weights.values()), dtype=np.float64)
+        probabilities = probabilities / probabilities.sum()
+        terrain_name = str(np.random.choice(terrain_names, p=probabilities))
+
+        self.current_terrain = terrain_name
+        self.current_roughness = 0
+        self.current_pitch_deg = -10.0 if 'inclined' in terrain_name else 0.0
+        return terrain_name
 
     def _place_robot_for_terrain(self, terrain_mode):
         """Place the robot over the selected terrain patch."""

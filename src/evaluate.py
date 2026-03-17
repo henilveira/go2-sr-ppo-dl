@@ -185,17 +185,24 @@ def load_trained_model(training_method, model_path, config):
     return CMAModelWrapper(policy)
 
 
-def place_robot_for_terrain(env, terrain_mode):
-    """Place robot on selected terrain patch in scene.xml."""
+def place_robot_for_terrain(env, terrain_mode, level=0):
+    """Place robot on selected terrain family and roughness level in scene.xml."""
+    level = int(np.clip(level, 0, 9))
+    x_pos = 3.25 * level
+    incline_deg = float(level + 1)
+    incline_rad = np.deg2rad(incline_deg)
+    incline_center_z = -0.05 + 1.5 * np.sin(incline_rad)
+
     spawn_map = {
-        "inclined": {"pos": [3.25, 0.0, 0.42], "pitch_deg": -10.0},
-        "rocky": {"pos": [0.0, 3.0, 0.40], "pitch_deg": 0.0},
-        "rocky_inclined": {"pos": [3.25, 3.0, 0.48], "pitch_deg": -10.0},
+        "default": {"pos": [0.0, 0.0, 0.12], "pitch_deg": 0.0},
+        "flat": {"pos": [x_pos, 3.0, 0.40], "pitch_deg": 0.0},
+        "inclined": {"pos": [x_pos, 6.0, 0.24 + incline_center_z], "pitch_deg": -incline_deg},
+        # Backward-compatible aliases
+        "rocky": {"pos": [x_pos, 3.0, 0.40], "pitch_deg": 0.0},
+        "rocky_inclined": {"pos": [x_pos, 6.0, 0.24 + incline_center_z], "pitch_deg": -incline_deg},
     }
 
-    spawn = spawn_map.get(terrain_mode)
-    if spawn is None:
-        return
+    spawn = spawn_map.get(terrain_mode, spawn_map["default"])
 
     env.data.qpos[0:3] = spawn["pos"]
 
@@ -230,13 +237,15 @@ def update_viewer_camera(viewer, env):
     viewer.cam.lookat[2] = float(base_pos[2])
 
 
-def evaluate(training_method=None, terrain_mode="default"):
+def evaluate(training_method=None, terrain_mode="default", level=0):
     """Evaluate trained model with visualization"""
     training_method = resolve_training_method(training_method)
-    valid_terrains = {"default", "inclined", "rocky", "rocky_inclined"}
+    valid_terrains = {"default", "flat", "inclined", "rocky", "rocky_inclined"}
     if terrain_mode not in valid_terrains:
         print(f"Unknown terrain '{terrain_mode}', using 'default'.")
         terrain_mode = "default"
+
+    level = int(np.clip(level, 0, 9))
     
     print("=" * 70)
     print("Model Evaluation - Go2 Self-Recovery")
@@ -246,6 +255,9 @@ def evaluate(training_method=None, terrain_mode="default"):
     # Load config
     print("\n1. Loading configuration...")
     config = load_config()
+    config.setdefault("terrain_curriculum", {})
+    config["terrain_curriculum"]["enabled"] = False
+    config["terrain_curriculum"]["default_terrain"] = "default"
     print("   ✓ Config loaded")
     
     # Find model
@@ -274,6 +286,7 @@ def evaluate(training_method=None, terrain_mode="default"):
     
     print("\n4. Starting evaluation...")
     print(f"   Terrain mode: {terrain_mode}")
+    print(f"   Terrain level: {level}")
     print("\nControls:")
     print("  - Double-click + drag: Rotate camera")
     print("  - Right-click + drag: Pan camera")
@@ -297,8 +310,8 @@ def evaluate(training_method=None, terrain_mode="default"):
                 
                 # Reset environment
                 obs, info = env.reset()
-                if terrain_mode != "default":
-                    place_robot_for_terrain(env, terrain_mode)
+                if terrain_mode != "default" or level != 0:
+                    place_robot_for_terrain(env, terrain_mode, level=level)
                     obs = env._get_observation()
                     info = env._get_info()
 
@@ -375,8 +388,14 @@ if __name__ == "__main__":
         "--terrain",
         type=str,
         default="default",
-        choices=["default", "inclined", "rocky", "rocky_inclined"],
-        help="Spawn terrain: default | inclined | rocky | rocky_inclined",
+        choices=["default", "flat", "inclined", "rocky", "rocky_inclined"],
+        help="Spawn terrain: default | flat | inclined | rocky | rocky_inclined",
+    )
+    parser.add_argument(
+        "--level",
+        type=int,
+        default=0,
+        help="Terrain roughness level (0-9). Used with --terrain flat/inclined aliases too.",
     )
     parser.add_argument(
         "--inclined",
@@ -389,4 +408,4 @@ if __name__ == "__main__":
     if args.inclined and terrain == "default":
         terrain = "inclined"
 
-    evaluate(training_method=args.model, terrain_mode=terrain)
+    evaluate(training_method=args.model, terrain_mode=terrain, level=args.level)

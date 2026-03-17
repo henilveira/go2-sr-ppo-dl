@@ -1,7 +1,7 @@
 <mujoco model="go2 scene">
   <include file="go2.xml" />
 
-  <statistic center="0 0 0.1" extent="0.8" />
+  <statistic center="14.5 4.5 0.2" extent="20" />
 
   <visual>
     <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0" />
@@ -13,10 +13,49 @@
     <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072" />
     <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8" width="300" height="300" />
     <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2" />
-  <hfield name="perlin_hfield_1" size="1.5 1.5 0.2 0.2" file="../height_field_1.png" /><hfield name="perlin_hfield_0" size="1.5 1.5 0.2 0.2" file="../height_field_0.png" /></asset>
+
+    <!-- Terrain levels 0..9 (same hfield used in flat row and inclined row) -->
+    <hfield name="terrain_level_0" size="1.5 1.5 0.2 0.2" file="../height_field_level_0.png" />
+    <hfield name="terrain_level_1" size="1.5 1.5 0.2 0.2" file="../height_field_level_1.png" />
+    <hfield name="terrain_level_2" size="1.5 1.5 0.2 0.2" file="../height_field_level_2.png" />
+    <hfield name="terrain_level_3" size="1.5 1.5 0.2 0.2" file="../height_field_level_3.png" />
+    <hfield name="terrain_level_4" size="1.5 1.5 0.2 0.2" file="../height_field_level_4.png" />
+    <hfield name="terrain_level_5" size="1.5 1.5 0.2 0.2" file="../height_field_level_5.png" />
+    <hfield name="terrain_level_6" size="1.5 1.5 0.2 0.2" file="../height_field_level_6.png" />
+    <hfield name="terrain_level_7" size="1.5 1.5 0.2 0.2" file="../height_field_level_7.png" />
+    <hfield name="terrain_level_8" size="1.5 1.5 0.2 0.2" file="../height_field_level_8.png" />
+    <hfield name="terrain_level_9" size="1.5 1.5 0.2 0.2" file="../height_field_level_9.png" />
+  </asset>
 
   <worldbody>
     <light pos="0 0 1.5" dir="0 0 -1" directional="true" />
     <geom name="floor" size="0 0 0.05" type="plane" material="groundplane" />
-  <geom pos="0 0 -0.025" type="box" size="1.5 1.5 0.05" quat="1.0 0.0 0.0 0.0" /><geom type="hfield" hfield="perlin_hfield_1" pos="0 3 0" quat="1.0 0.0 0.0 0.0" /><geom pos="3.25 0 0.21047226650039554" type="box" size="1.5 1.5 0.05" quat="0.9961946980917455 0.0 -0.08715574274765817 0.0" /><geom type="hfield" hfield="perlin_hfield_0" pos="3.25 3 0.21047226650039554" quat="0.9961946980917455 0.0 -0.08715574274765817 0.0" /></worldbody>
+
+    <!-- Reference flat pad -->
+    <geom pos="0 0 -0.025" type="box" size="1.5 1.5 0.05" quat="1.0 0.0 0.0 0.0" />
+
+    <!-- Row A: flat terrains (levels 0..9) at y=3 -->
+    <geom type="hfield" hfield="terrain_level_0" pos="0.00 3.0 0.0" quat="1.0 0.0 0.0 0.0" />
+    <geom type="hfield" hfield="terrain_level_1" pos="3.25 3.0 0.0" quat="1.0 0.0 0.0 0.0" />
+    <geom type="hfield" hfield="terrain_level_2" pos="6.50 3.0 0.0" quat="1.0 0.0 0.0 0.0" />
+    <geom type="hfield" hfield="terrain_level_3" pos="9.75 3.0 0.0" quat="1.0 0.0 0.0 0.0" />
+    <geom type="hfield" hfield="terrain_level_4" pos="13.00 3.0 0.0" quat="1.0 0.0 0.0 0.0" />
+    <geom type="hfield" hfield="terrain_level_5" pos="16.25 3.0 0.0" quat="1.0 0.0 0.0 0.0" />
+    <geom type="hfield" hfield="terrain_level_6" pos="19.50 3.0 0.0" quat="1.0 0.0 0.0 0.0" />
+    <geom type="hfield" hfield="terrain_level_7" pos="22.75 3.0 0.0" quat="1.0 0.0 0.0 0.0" />
+    <geom type="hfield" hfield="terrain_level_8" pos="26.00 3.0 0.0" quat="1.0 0.0 0.0 0.0" />
+    <geom type="hfield" hfield="terrain_level_9" pos="29.25 3.0 0.0" quat="1.0 0.0 0.0 0.0" />
+
+    <!-- Row B: same terrains with gradual incline (levels 0..9 -> 1deg..10deg) at y=6 -->
+    <geom type="hfield" hfield="terrain_level_0" pos="0.00 6.0 -0.023821390344075" quat="0.999961923064171 0.0 -0.008726535498374 0.0" />
+    <geom type="hfield" hfield="terrain_level_1" pos="3.25 6.0 0.002349245053751" quat="0.999847695156391 0.0 -0.017452406437284 0.0" />
+    <geom type="hfield" hfield="terrain_level_2" pos="6.50 6.0 0.028503934364416" quat="0.999657324975557 0.0 -0.026176948307873 0.0" />
+    <geom type="hfield" hfield="terrain_level_3" pos="9.75 6.0 0.054634710616188" quat="0.999390827019096 0.0 -0.034899496702501 0.0" />
+    <geom type="hfield" hfield="terrain_level_4" pos="13.00 6.0 0.080733614121487" quat="0.999048221581858 0.0 -0.043619387365336 0.0" />
+    <geom type="hfield" hfield="terrain_level_5" pos="16.25 6.0 0.106792694901480" quat="0.998629534754574 0.0 -0.052335956242944 0.0" />
+    <geom type="hfield" hfield="terrain_level_6" pos="19.50 6.0 0.132804015107721" quat="0.998134798421867 0.0 -0.061048539534857 0.0" />
+    <geom type="hfield" hfield="terrain_level_7" pos="22.75 6.0 0.158759651440098" quat="0.997564050259824 0.0 -0.069756473744125 0.0" />
+    <geom type="hfield" hfield="terrain_level_8" pos="26.00 6.0 0.184651697560346" quat="0.996917333733128 0.0 -0.078459095727845 0.0" />
+    <geom type="hfield" hfield="terrain_level_9" pos="29.25 6.0 0.210472266500396" quat="0.996194698091746 0.0 -0.087155742747658 0.0" />
+  </worldbody>
 </mujoco>

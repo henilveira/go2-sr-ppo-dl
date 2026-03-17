@@ -125,6 +125,8 @@ class TerrainCurriculum:
         terrains = []
         
         for roughness in range(self.num_roughness_levels):
+            incline_deg = ((roughness + 1) / self.num_roughness_levels) * 10.0
+
             # Phase 1: Roughness N with NO incline
             terrains.append({
                 'name': f'rough_{roughness}_flat',
@@ -137,8 +139,8 @@ class TerrainCurriculum:
             terrains.append({
                 'name': f'rough_{roughness}_inclined',
                 'roughness_level': roughness,
-                'pitch_deg': -10.0,  # Negative = tilting forward
-                'incline_deg': 10.0,  # For logging
+                'pitch_deg': -incline_deg,  # Negative = tilting forward
+                'incline_deg': incline_deg,
             })
         
         return terrains
