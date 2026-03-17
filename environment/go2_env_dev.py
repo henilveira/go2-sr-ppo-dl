@@ -8,6 +8,7 @@ import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 import mujoco
+import pinocchio as pin
 from pathlib import Path
 
 
@@ -15,11 +16,12 @@ class Go2Env(gym.Env):
     """
     Ambiente Gym para self-recovery do Unitree Go2 usando MuJoCo
     
-    Observation space: 30 dimensions
+    Observation space: 33 dimensions
     - 12: joint positions
     - 12: joint velocities  
     - 3: base orientation (R^-1 · g)
     - 3: base angular velocity
+    - 3: center of mass position in base frame
     
     Action space: 12 dimensions
     - Target joint positions (normalized to [-1, 1])
@@ -41,15 +43,13 @@ class Go2Env(gym.Env):
         # Load MuJoCo model
         self._load_model()
 
-        self.training_progress = 0.0
-        self.current_terrain = 'default'
-        self.terrain_curriculum_config = self.config.get('terrain_curriculum', {})
+        self.observation_size = int(self.config.get('observation', {}).get('size', 30))
         
         # Define observation and action spaces
         self.observation_space = spaces.Box(
             low=-1.0,
             high=1.0,
-            shape=(30,),
+            shape=(self.observation_size,),
             dtype=np.float32
         )
 
@@ -64,8 +64,6 @@ class Go2Env(gym.Env):
         self.prev_action = np.zeros(12)
         self.current_action = np.zeros(12)  # For smoothing
         self.step_count = 0
-        self.best_recovery_score = 0.0
-        self.steps_since_progress = 0
         
         # Action smoothing factor (0 = no smoothing, 1 = full smoothing)
         # Higher value = smoother but slower response
@@ -76,21 +74,13 @@ class Go2Env(gym.Env):
         if self.render_mode == 'human':
             # Will be initialized on first render() call
             pass
-
-    def set_training_progress(self, progress):
-        """Update global training progress for terrain curriculum callbacks."""
-        self.training_progress = float(np.clip(progress, 0.0, 1.0))
             
     def _load_model(self):
         """Load Go2 MuJoCo model"""
         # Path to Go2 XML model
-        model_path = self.config['robot'].get('model_path', 'assets/mujoco/unitree_go2/scene.xml')
-        
-        # Make path absolute if relative
-        if not Path(model_path).is_absolute():
-            # Resolve relative to config directory
-            config_dir = Path(__file__).parent.parent / 'config'
-            model_path = (config_dir / model_path).resolve()
+        model_path = self._resolve_robot_asset_path(
+            self.config['robot'].get('model_path', 'assets/mujoco/unitree_go2/scene.xml')
+        )
         
         if not Path(model_path).exists():
             raise FileNotFoundError(
@@ -105,6 +95,16 @@ class Go2Env(gym.Env):
         
         # Get joint IDs (Go2 has 12 actuated joints)
         self._setup_joints()
+        self._setup_pinocchio_model()
+
+    def _resolve_robot_asset_path(self, asset_path):
+        """Resolve robot asset path relative to the config directory when needed."""
+        resolved_path = Path(asset_path)
+        if resolved_path.is_absolute():
+            return resolved_path
+
+        config_dir = Path(__file__).parent.parent / 'config'
+        return (config_dir / resolved_path).resolve()
         
     def _setup_joints(self):
         """
@@ -165,101 +165,18 @@ class Go2Env(gym.Env):
         
         print(f"Found {len(self.joint_ids)} joints, {len(self.actuator_ids)} actuators")
 
-    def _sample_terrain_mode(self):
-        """Sample terrain according to curriculum stage unlocked by training progress."""
-        curriculum = self.terrain_curriculum_config
-        if not curriculum.get('enabled', False):
-            return curriculum.get('default_terrain', 'default')
-
-        stages = curriculum.get('stages', [])
-        if not stages:
-            return curriculum.get('default_terrain', 'default')
-
-        active_stage = stages[-1]
-        for stage in stages:
-            if self.training_progress <= stage.get('until_progress', 1.0):
-                active_stage = stage
-                break
-
-        weights = active_stage.get('weights', {'default': 1.0})
-        terrain_names = list(weights.keys())
-        probabilities = np.asarray(list(weights.values()), dtype=np.float64)
-        probabilities = probabilities / probabilities.sum()
-        return str(np.random.choice(terrain_names, p=probabilities))
-
-    def _place_robot_for_terrain(self, terrain_mode):
-        """Place the robot over the selected terrain patch."""
-        spawn_map = {
-            'default': {'pos': [0.0, 0.0, 0.12], 'pitch_deg': 0.0, 'settle_steps': 100},
-            'inclined': {'pos': [3.25, 0.0, 0.42], 'pitch_deg': -10.0, 'settle_steps': 80},
-            'rocky': {'pos': [0.0, 3.0, 0.40], 'pitch_deg': 0.0, 'settle_steps': 80},
-            'rocky_inclined': {'pos': [3.25, 3.0, 0.48], 'pitch_deg': -10.0, 'settle_steps': 80},
-        }
-        spawn = spawn_map.get(terrain_mode, spawn_map['default'])
-
-        self.data.qpos[0:3] = spawn['pos']
-
-        roll = np.pi + np.random.uniform(-0.1, 0.1)
-        pitch = np.deg2rad(spawn['pitch_deg']) + np.random.uniform(-0.1, 0.1)
-        yaw = np.random.uniform(-np.pi, np.pi)
-        quat = self._euler_to_quat([roll, pitch, yaw])
-        self.data.qpos[3:7] = quat
-
-        tucked_config = np.array([
-            0.0, 1.8, -2.4,
-            0.0, 1.8, -2.4,
-            0.0, 1.8, -2.4,
-            0.0, 1.8, -2.4,
-        ])
-
-        if self.config['training'].get('random_joint_positions', True):
-            noise = np.random.uniform(-0.2, 0.2, size=12)
-            joint_pos = tucked_config + noise
-            for i, (lower, upper) in enumerate(self.joint_limits):
-                joint_pos[i] = np.clip(joint_pos[i], lower, upper)
-            for i, addr in enumerate(self.joint_qpos_addr):
-                self.data.qpos[addr] = joint_pos[i]
-        else:
-            for i, addr in enumerate(self.joint_qpos_addr):
-                self.data.qpos[addr] = tucked_config[i]
-
-        self.data.qvel[:] = 0
-        mujoco.mj_forward(self.model, self.data)
-
-        for _ in range(spawn['settle_steps']):
-            self.data.ctrl[:] = 0
-            mujoco.mj_step(self.model, self.data)
-
-    def _compute_recovery_score(self):
-        """Compute a scalar recovery score used for progress-based early stopping."""
-        uprightness = self._get_uprightness()
-        height_ratio = np.clip(
-            self.data.qpos[2] / self.config['robot'].get('target_height', 0.27),
-            0.0,
-            1.0,
+    def _setup_pinocchio_model(self):
+        """Load Pinocchio model and build a joint index mapping for CoM computation."""
+        urdf_path = self._resolve_robot_asset_path(
+            self.config['robot'].get('urdf_path', '../../go2-sr-ppo-dl/environment/assets/unitree_go2/go2.urdf')
         )
-        return 0.7 * uprightness + 0.3 * height_ratio
 
-    def _get_uprightness(self):
-        """Return uprightness in [0, 1], where 1 means base is upright."""
-        base_quat = self.data.qpos[3:7]
-        rot_matrix = self._quat_to_matrix(base_quat)
-        body_z = rot_matrix @ np.array([0.0, 0.0, 1.0])
-        return float(np.clip((body_z[2] + 1.0) * 0.5, 0.0, 1.0))
+        if not urdf_path.exists():
+            raise FileNotFoundError(f"Go2 URDF not found at {urdf_path}")
 
-    def _update_termination_progress(self):
-        """Track best recovery score and stagnation counter for early termination."""
-        termination_cfg = self.config.get('training', {}).get('early_termination', {})
-        if not termination_cfg.get('enabled', False):
-            return
-
-        current_score = self._compute_recovery_score()
-        min_improvement = termination_cfg.get('min_improvement', 0.02)
-        if current_score > self.best_recovery_score + min_improvement:
-            self.best_recovery_score = current_score
-            self.steps_since_progress = 0
-        else:
-            self.steps_since_progress += 1
+        self.pin_model = pin.buildModelFromUrdf(str(urdf_path), pin.JointModelFreeFlyer())
+        self.pin_data = self.pin_model.createData()
+        self.pin_joint_q_indices = [self.pin_model.idx_qs[self.pin_model.getJointId(name)] for name in self.joint_names]
         
     def reset(self, seed=None, options=None):
         """Reset environment to initial state - robot on its back with legs tucked"""
@@ -273,15 +190,62 @@ class Go2Env(gym.Env):
         # This is the self-recovery starting position from the paper
         # ============================================================
         
-        self.current_terrain = self._sample_terrain_mode()
-        self._place_robot_for_terrain(self.current_terrain)
+        # Base position - LOW on the ground
+        initial_height = 0.12  # Slightly higher to account for legs
+        self.data.qpos[0:3] = [0, 0, initial_height]
+        
+        # Orientation: ALWAYS on back (upside down) - roll = π
+        # Small random variations only
+        roll = np.pi + np.random.uniform(-0.1, 0.1)  # ~180° (on back)
+        pitch = np.random.uniform(-0.1, 0.1)  # Small pitch variation
+        yaw = np.random.uniform(-np.pi, np.pi)  # Any yaw is fine
+        quat = self._euler_to_quat([roll, pitch, yaw])
+        self.data.qpos[3:7] = quat
+        
+        # Joint positions: Legs TUCKED IN (bent towards body)
+        # When on back, legs should be folded up
+        # Thigh ~2.0 (bent up), Calf ~-2.0 (bent back towards thigh)
+        tucked_config = np.array([
+            0.0, 1.8, -2.4,   # FR: hip neutral, thigh up, calf tucked
+            0.0, 1.8, -2.4,   # FL
+            0.0, 1.8, -2.4,   # RR  
+            0.0, 1.8, -2.4    # RL
+        ])
+        
+        # Add small random noise to joint positions
+        if self.config['training'].get('random_joint_positions', True):
+            noise = np.random.uniform(-0.2, 0.2, size=12)
+            joint_pos = tucked_config + noise
+            
+            # Clip to joint limits
+            for i, (lower, upper) in enumerate(self.joint_limits):
+                joint_pos[i] = np.clip(joint_pos[i], lower, upper)
+            
+            # Set joint positions using correct mapping
+            for i, addr in enumerate(self.joint_qpos_addr):
+                self.data.qpos[addr] = joint_pos[i]
+        else:
+            # Set joint positions using correct mapping
+            for i, addr in enumerate(self.joint_qpos_addr):
+                self.data.qpos[addr] = tucked_config[i]
+        
+        # Zero velocities
+        self.data.qvel[:] = 0
+        
+        # Forward kinematics
+        mujoco.mj_forward(self.model, self.data)
+        
+        # CRITICAL: Let robot settle on ground (like original - 100 steps)
+        # This prevents weird floating/unstable initial states
+        for _ in range(100):
+            # Apply small torques to help settle
+            self.data.ctrl[:] = 0
+            mujoco.mj_step(self.model, self.data)
         
         # Reset tracking variables
         self.prev_action = np.zeros(12)
         self.current_action = np.zeros(12)  # Reset smoothed action too
         self.step_count = 0
-        self.best_recovery_score = self._compute_recovery_score()
-        self.steps_since_progress = 0
         
         observation = self._get_observation()
         info = self._get_info()
@@ -307,12 +271,10 @@ class Go2Env(gym.Env):
         
         # Compute reward (use original action for reward, not smoothed)
         reward, reward_info = self._compute_reward(observation, action)
-
-        self._update_termination_progress()
         
         # Check termination
         terminated = self._is_terminated(observation)
-        truncated = (self.step_count + 1) >= self.config['training']['max_episode_steps']
+        truncated = self.step_count >= self.config['training']['max_episode_steps']
         
         # Update tracking
         self.prev_action = action
@@ -329,7 +291,7 @@ class Go2Env(gym.Env):
         
     def _get_observation(self):
         """
-        Get 30-dimensional observation
+        Get observation vector including Pinocchio-based center of mass.
         Paper Section II.B, Table I
         """
         # Joint positions (12) - usando mapeamento correto!
@@ -347,14 +309,23 @@ class Go2Env(gym.Env):
         
         # Base angular velocity (3) - indices 27-29
         base_angular_vel = self.data.qvel[3:6].copy()  # Angular velocity in world frame
+
+        # Center of mass position (3) - indices 30-32
+        center_of_mass = self._get_center_of_mass_in_base_frame()
         
         # Concatenate
         obs = np.concatenate([
             joint_positions,      # 12
             joint_velocities,     # 12
             base_orientation,     # 3
-            base_angular_vel      # 3
-        ])  # Total: 30
+            base_angular_vel,     # 3
+            center_of_mass        # 3
+        ])
+
+        if obs.shape[0] != self.observation_space.shape[0]:
+            raise ValueError(
+                f"Observation size mismatch: got {obs.shape[0]}, expected {self.observation_space.shape[0]}"
+            )
         
         # Add noise (paper Section II.B)
         obs = self._add_observation_noise(obs)
@@ -433,12 +404,45 @@ class Go2Env(gym.Env):
             norm_config['base_ang_vel_max'],
             -1.0, 1.0
         )
+
+        # Center of mass position in base frame (30-32)
+        obs[30:33] = self._normalize_values(
+            obs[30:33],
+            np.asarray(norm_config.get('com_pos_min', [-0.5, -0.5, -0.5]), dtype=np.float32),
+            np.asarray(norm_config.get('com_pos_max', [0.5, 0.5, 0.5]), dtype=np.float32),
+            -1.0, 1.0
+        )
+        obs[30:33] = np.clip(obs[30:33], -1.0, 1.0)
         
         return obs
         
     def _normalize_values(self, values, x_min, x_max, y_min, y_max):
         """Apply eq. (7) from paper"""
         return y_min + (y_max - y_min) / (x_max - x_min) * (values - x_min)
+
+    def _build_pinocchio_configuration(self):
+        """Convert MuJoCo state into a Pinocchio free-flyer configuration vector."""
+        pin_q = np.zeros(self.pin_model.nq, dtype=np.float64)
+        pin_q[0:3] = self.data.qpos[0:3]
+
+        mujoco_quat = self.data.qpos[3:7]
+        pin_q[3:7] = np.array([mujoco_quat[1], mujoco_quat[2], mujoco_quat[3], mujoco_quat[0]])
+
+        for env_joint_idx, pin_q_idx in enumerate(self.pin_joint_q_indices):
+            pin_q[pin_q_idx] = self.data.qpos[self.joint_qpos_addr[env_joint_idx]]
+
+        return pin_q
+
+    def _get_center_of_mass_in_base_frame(self):
+        """Compute center of mass with Pinocchio and express it in the robot base frame."""
+        pin_q = self._build_pinocchio_configuration()
+        pin.centerOfMass(self.pin_model, self.pin_data, pin_q)
+
+        com_world = np.asarray(self.pin_data.com[0]).copy()
+        base_position = self.data.qpos[0:3]
+        base_rotation = self._quat_to_matrix(self.data.qpos[3:7])
+
+        return base_rotation.T @ (com_world - base_position)
         
     def _scale_action(self, action):
         """
@@ -510,19 +514,11 @@ class Go2Env(gym.Env):
         
     def _is_terminated(self, obs):
         """
-        Check if episode should terminate early due to clear lack of progress.
+        Check if episode should terminate
+        Paper: "The only termination condition was the maximum number of steps"
+        So we return False here, truncation handles max steps
         """
-        termination_cfg = self.config.get('training', {}).get('early_termination', {})
-        if not termination_cfg.get('enabled', False):
-            return False
-
-        if self.step_count < termination_cfg.get('min_steps_before_check', 80):
-            return False
-
-        if self.best_recovery_score >= termination_cfg.get('success_score_threshold', 0.8):
-            return False
-
-        return self.steps_since_progress >= termination_cfg.get('patience_steps', 120)
+        return False
         
     def _get_info(self):
         """Get additional info for reward computation"""
@@ -535,20 +531,12 @@ class Go2Env(gym.Env):
         
         # Base velocity
         base_linear_vel = self.data.qvel[0:3]
-
-        uprightness = self._get_uprightness()
-        recovery_score = self._compute_recovery_score()
         
         return {
             'base_height': base_height,
             'feet_contacts': feet_contacts,
             'base_linear_velocity': base_linear_vel,
-            'uprightness': uprightness,
-            'orientation_error': 1.0 - uprightness,
-            'recovery_score': recovery_score,
-            'best_recovery_score': self.best_recovery_score,
-            'steps_since_progress': self.steps_since_progress,
-            'terrain_mode': self.current_terrain,
+            'center_of_mass_base': self._get_center_of_mass_in_base_frame(),
             'step': self.step_count
         }
         

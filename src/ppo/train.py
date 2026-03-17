@@ -23,7 +23,7 @@ from stable_baselines3.common.monitor import Monitor
 import torch
 
 from environment.go2_env import Go2Env
-from src.utils.callbacks import RewardLoggerCallback, CurriculumMonitorCallback, TensorBoardMetricsCallback
+from src.utils.callbacks import RewardLoggerCallback, CurriculumMonitorCallback, TensorBoardMetricsCallback, TerrainCurriculumCallback
 
 
 def load_config():
@@ -114,6 +114,14 @@ def train():
     
     # Setup callbacks
     print("\n4. Setting up callbacks...")
+
+    training_config = config.get('training', {})
+    total_timesteps = training_config.get(
+        'total_timesteps_ppo',
+        training_config.get('total_timesteps')
+    )
+    if total_timesteps is None:
+        raise KeyError("Missing training.total_timesteps_ppo (or legacy training.total_timesteps)")
     
     # Reward logger - show stats in terminal
     reward_logger = RewardLoggerCallback(log_freq=5)  # Log every 5 rollouts
@@ -123,6 +131,11 @@ def train():
     
     # TensorBoard metrics - log custom metrics (time, SPS, etc.)
     tensorboard_callback = TensorBoardMetricsCallback(log_freq=1000)  # Every 1k steps
+
+    terrain_curriculum_callback = TerrainCurriculumCallback(
+        total_timesteps=total_timesteps,
+        log_freq=10_000,
+    )
     
     # Checkpoint callback - save model every N steps
     checkpoint_callback = CheckpointCallback(
@@ -145,6 +158,7 @@ def train():
     callback_list = CallbackList([
         reward_logger, 
         curriculum_monitor,
+        terrain_curriculum_callback,
         tensorboard_callback,  # Add TensorBoard metrics
         checkpoint_callback, 
         eval_callback
@@ -155,7 +169,7 @@ def train():
     print("\n5. Creating PPO model...")
     print(f"   Architecture: {ppo_config['policy_kwargs']['net_arch']}")
     print(f"   Learning rate: {ppo_config['learning_rate']}")
-    print(f"   Device: {'cuda' if torch.cuda.is_available() else 'cpu'}")
+    print(f"   Device: {'cpu' if torch.cuda.is_available() else 'cpu'}")
     
     model = PPO(
         "MlpPolicy",
@@ -179,15 +193,6 @@ def train():
     )
     print("   ✓ Model created")
     
-    # Training parameters
-    training_config = config.get('training', {})
-    total_timesteps = training_config.get(
-        'total_timesteps_ppo',
-        training_config.get('total_timesteps')
-    )
-    if total_timesteps is None:
-        raise KeyError("Missing training.total_timesteps_ppo (or legacy training.total_timesteps)")
-
     print(f"\n6. Starting training...")
     print(f"   Total timesteps: {total_timesteps:,}")
     print(f"   Expected episodes: ~{total_timesteps // ppo_config['n_steps']:,}")

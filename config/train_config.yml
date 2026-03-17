@@ -12,6 +12,7 @@ robot:
   # MuJoCo model path
   # Using model from root project directory
   model_path: "../../go2-sr-ppo-dl/environment/assets/unitree_go2/scene.xml"
+  urdf_path: "../../go2-sr-ppo-dl/environment/assets/unitree_go2/go2.urdf"
 
   num_joints: 12
 
@@ -106,15 +107,15 @@ paper_ppo:
 
 improved_ppo:
   batch_size: 256
-  learning_rate: 2.5e-4
-  gamma: 0.995
-  ent_coef: 1.0e-3
-  gae_lambda: 0.97
-  vf_coef: 0.5
-  max_grad_norm: 0.5
+  learning_rate: 0.00021332329186045702
+  gamma: 0.9727412553508487
+  ent_coef: 0.005237780203952844
+  gae_lambda: 0.9138068587115054
+  vf_coef: 0.15650014625945877
+  max_grad_norm: 0.8549178816984591
   n_steps: 2048
-  n_epochs: 10
-  clip_range: 0.2
+  n_epochs: 20
+  clip_range: 0.2789326463680452
   policy_kwargs:
     net_arch: [256, 256, 128]
     activation_fn: "relu"
@@ -185,12 +186,41 @@ training:
   random_orientation: true
   random_joint_positions: true
   total_episodes: 300
-  total_timesteps_ppo: 2_500_400
+  total_timesteps_ppo: 3_686_400
   total_timesteps_sac: 3_686_400
   save_freq: 100_000
   eval_freq: 25_000
   n_eval_episodes: 10
   log_interval: 5
+  early_termination:
+    enabled: true
+    min_steps_before_check: 80
+    patience_steps: 120
+    min_improvement: 0.02
+    success_score_threshold: 0.8
+
+terrain_curriculum:
+  enabled: true
+  default_terrain: "default"
+  stages:
+    - until_progress: 0.25
+      weights:
+        default: 1.0
+    - until_progress: 0.50
+      weights:
+        default: 0.7
+        inclined: 0.3
+    - until_progress: 0.75
+      weights:
+        default: 0.45
+        inclined: 0.30
+        rocky: 0.25
+    - until_progress: 1.00
+      weights:
+        default: 0.25
+        inclined: 0.25
+        rocky: 0.25
+        rocky_inclined: 0.25
   
 simulation:
   engine: "mujoco"

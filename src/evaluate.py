@@ -1,9 +1,12 @@
 """Evaluate trained model with visualization."""
 
 import sys
+import argparse
 from pathlib import Path
 import yaml
 import time
+import numpy as np
+import mujoco
 import mujoco.viewer
 import torch
 import torch.nn as nn
@@ -106,19 +109,11 @@ class CMAModelWrapper:
         return action, None
 
 
-def ask_training_method():
-    """Ask user which training method should be evaluated."""
-    user_value = input(
-        "Choose a training method model to evaluate:\n"
-        " * ppo\n"
-        " * sac\n"
-        " * cma-es\n"
-        " * cma\n"
-    ).strip().lower()
-
-    canonical = METHOD_ALIASES.get(user_value)
+def resolve_training_method(training_method):
+    """Resolve model method from CLI arg using known aliases."""
+    canonical = METHOD_ALIASES.get((training_method or "ppo").strip().lower())
     if canonical is None:
-        print(f"Unknown method '{user_value}', using 'ppo' as default.")
+        print(f"Unknown method '{training_method}', using 'ppo' as default.")
         return "ppo"
     return canonical
 
@@ -190,9 +185,58 @@ def load_trained_model(training_method, model_path, config):
     return CMAModelWrapper(policy)
 
 
-def evaluate():
+def place_robot_for_terrain(env, terrain_mode):
+    """Place robot on selected terrain patch in scene.xml."""
+    spawn_map = {
+        "inclined": {"pos": [3.25, 0.0, 0.42], "pitch_deg": -10.0},
+        "rocky": {"pos": [0.0, 3.0, 0.40], "pitch_deg": 0.0},
+        "rocky_inclined": {"pos": [3.25, 3.0, 0.48], "pitch_deg": -10.0},
+    }
+
+    spawn = spawn_map.get(terrain_mode)
+    if spawn is None:
+        return
+
+    env.data.qpos[0:3] = spawn["pos"]
+
+    pitch = np.deg2rad(spawn["pitch_deg"])
+    yaw = np.random.uniform(-np.pi, np.pi)
+    quat = env._euler_to_quat([np.pi, pitch, yaw])
+    env.data.qpos[3:7] = quat
+
+    tucked_config = np.array([
+        0.0, 1.8, -2.4,
+        0.0, 1.8, -2.4,
+        0.0, 1.8, -2.4,
+        0.0, 1.8, -2.4,
+    ])
+    for i, addr in enumerate(env.joint_qpos_addr):
+        env.data.qpos[addr] = tucked_config[i]
+
+    env.data.qvel[:] = 0
+    mujoco.mj_forward(env.model, env.data)
+
+    # Let contacts settle to avoid floating starts on uneven terrain.
+    for _ in range(60):
+        env.data.ctrl[:] = 0
+        mujoco.mj_step(env.model, env.data)
+
+
+def update_viewer_camera(viewer, env):
+    """Keep camera centered around robot base position."""
+    base_pos = env.data.qpos[0:3]
+    viewer.cam.lookat[0] = float(base_pos[0])
+    viewer.cam.lookat[1] = float(base_pos[1])
+    viewer.cam.lookat[2] = float(base_pos[2])
+
+
+def evaluate(training_method=None, terrain_mode="default"):
     """Evaluate trained model with visualization"""
-    training_method = ask_training_method()
+    training_method = resolve_training_method(training_method)
+    valid_terrains = {"default", "inclined", "rocky", "rocky_inclined"}
+    if terrain_mode not in valid_terrains:
+        print(f"Unknown terrain '{terrain_mode}', using 'default'.")
+        terrain_mode = "default"
     
     print("=" * 70)
     print("Model Evaluation - Go2 Self-Recovery")
@@ -229,6 +273,7 @@ def evaluate():
     print("   ✓ Environment created")
     
     print("\n4. Starting evaluation...")
+    print(f"   Terrain mode: {terrain_mode}")
     print("\nControls:")
     print("  - Double-click + drag: Rotate camera")
     print("  - Right-click + drag: Pan camera")
@@ -238,6 +283,10 @@ def evaluate():
     # Launch viewer
     with mujoco.viewer.launch_passive(env.model, env.data) as viewer:
         try:
+            viewer.cam.distance = 2.0
+            viewer.cam.elevation = -20
+            viewer.cam.azimuth = 135
+
             episode = 1
             total_episodes = 5  # Run 5 episodes
             
@@ -248,6 +297,12 @@ def evaluate():
                 
                 # Reset environment
                 obs, info = env.reset()
+                if terrain_mode != "default":
+                    place_robot_for_terrain(env, terrain_mode)
+                    obs = env._get_observation()
+                    info = env._get_info()
+
+                update_viewer_camera(viewer, env)
                 print(f"Initial height: {info['base_height']:.3f}m")
                 
                 episode_reward = 0
@@ -265,6 +320,7 @@ def evaluate():
                     step += 1
                     
                     # Sync viewer
+                    update_viewer_camera(viewer, env)
                     viewer.sync()
                     
                     # Print progress every 100 steps
@@ -308,4 +364,29 @@ def evaluate():
 
 
 if __name__ == "__main__":
-    evaluate()
+    parser = argparse.ArgumentParser(description="Evaluate latest trained model")
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="ppo",
+        help="Model type: ppo | sac | cma-es | cma",
+    )
+    parser.add_argument(
+        "--terrain",
+        type=str,
+        default="default",
+        choices=["default", "inclined", "rocky", "rocky_inclined"],
+        help="Spawn terrain: default | inclined | rocky | rocky_inclined",
+    )
+    parser.add_argument(
+        "--inclined",
+        action="store_true",
+        help="Deprecated alias for --terrain inclined",
+    )
+    args = parser.parse_args()
+
+    terrain = args.terrain
+    if args.inclined and terrain == "default":
+        terrain = "inclined"
+
+    evaluate(training_method=args.model, terrain_mode=terrain)

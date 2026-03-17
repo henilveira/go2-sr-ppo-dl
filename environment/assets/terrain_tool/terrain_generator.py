@@ -249,11 +249,16 @@ if __name__ == "__main__":
     tg.AddBox(position=[0, 0, -0.025], euler=[0.0, 0, 0.0], size=[lenght, wide, 0.1])
     tg.AddPerlinHeighField(position=[0, wide, 0], size=[wide, wide], idx=1)
 
-    # 5º slope terrain and 5º Perlin heigh field
-    ang = np.pi * 5 / 180
+    # 10º slope terrain and 10º Perlin heigh field
+    ang = np.pi * 10 / 180
     z = -0.05 + lenght * np.sin(ang) / 2
     tg.AddBox(position=[wide + 0.25, 0, z], euler=[0.0, -ang, 0.0], size=[lenght, wide, 0.1])
-    tg.AddPerlinHeighField(position=[wide + 0.25, wide, z], euler=[0.0, -ang, 0.0], size=[wide, wide], idx=0)
+    tg.AddPerlinHeighField(
+        position=[wide + 0.25, wide, z],
+        euler=[0.0, -ang, 0.0],
+        size=[wide, wide],
+        idx=0,
+    )
 
     # ang = np.pi * 5 / 180
     # z = -0.05 + lenght * np.sin(ang) / 2

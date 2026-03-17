@@ -82,6 +82,40 @@ class CurriculumMonitorCallback(BaseCallback):
             self.curriculum_activations = []
 
 
+class TerrainCurriculumCallback(BaseCallback):
+    """Push global training progress into envs so terrain difficulty increases over time."""
+
+    def __init__(self, total_timesteps, log_freq=10000, verbose=0):
+        super().__init__(verbose)
+        self.total_timesteps = max(int(total_timesteps), 1)
+        self.log_freq = log_freq
+        self.latest_progress = 0.0
+        self.terrain_counts = {}
+
+    def _on_training_start(self) -> None:
+        self.training_env.env_method("set_training_progress", 0.0)
+
+    def _on_step(self) -> bool:
+        self.latest_progress = min(self.num_timesteps / self.total_timesteps, 1.0)
+        self.training_env.env_method("set_training_progress", self.latest_progress)
+
+        if hasattr(self.locals, 'infos') and self.locals['infos']:
+            for info in self.locals['infos']:
+                terrain_mode = info.get('terrain_mode')
+                if terrain_mode is not None:
+                    self.terrain_counts[terrain_mode] = self.terrain_counts.get(terrain_mode, 0) + 1
+
+        if self.num_timesteps % self.log_freq == 0:
+            self.logger.record("curriculum/training_progress", self.latest_progress)
+            total = sum(self.terrain_counts.values())
+            if total > 0:
+                for terrain_name, count in self.terrain_counts.items():
+                    self.logger.record(f"terrain/{terrain_name}_ratio", count / total)
+                self.terrain_counts = {}
+
+        return True
+
+
 class TensorBoardMetricsCallback(BaseCallback):
     """
     Log custom metrics to TensorBoard during training
@@ -143,12 +177,18 @@ class TensorBoardMetricsCallback(BaseCallback):
                 heights = []
                 orientations = []
                 success_flags = []
+                recovery_scores = []
+                stagnation_steps = []
                 
                 for info in self.locals['infos']:
                     if 'base_height' in info:
                         heights.append(info['base_height'])
                     if 'orientation_error' in info:
                         orientations.append(info['orientation_error'])
+                    if 'recovery_score' in info:
+                        recovery_scores.append(info['recovery_score'])
+                    if 'steps_since_progress' in info:
+                        stagnation_steps.append(info['steps_since_progress'])
                     if 'reward_breakdown' in info:
                         rb = info['reward_breakdown']
                         if 'curriculum_active' in rb:
@@ -161,6 +201,12 @@ class TensorBoardMetricsCallback(BaseCallback):
                 
                 if len(orientations) > 0:
                     self.logger.record("env/mean_orientation_error", np.mean(orientations))
+
+                if len(recovery_scores) > 0:
+                    self.logger.record("env/mean_recovery_score", np.mean(recovery_scores))
+
+                if len(stagnation_steps) > 0:
+                    self.logger.record("env/mean_stagnation_steps", np.mean(stagnation_steps))
                 
                 if len(success_flags) > 0:
                     self.logger.record("env/curriculum_activation_rate", np.mean(success_flags))
