@@ -205,13 +205,14 @@ training:
 
 terrain_curriculum:
   enabled: true
-  mode: "dynamic_roughness"  # Use dynamic terrain generation with 20 phases
+  mode: "dynamic_roughness"  # Use dynamic terrain generation with 29 phases
   # Phase structure (auto-generated):
-  # Phases 0-1: Roughness 0 (smooth) - without/with incline
-  # Phases 2-3: Roughness 1 - without/with incline
+  # Phases 0-8: Smooth flat terrain with progressive incline (1°..9°)
+  # Phases 9-10: Roughness 0 (smooth) - without/with incline
+  # Phases 11-12: Roughness 1 - without/with incline
   # ... up to ...
-  # Phases 18-19: Roughness 9 (rough) - without/with incline
-  # Total 20 phases (10 roughness × 2 incline options)
+  # Phases 27-28: Roughness 9 (rough) - without/with incline
+  # Total 29 phases (9 smooth-incline + 10 roughness × 2)
   
 simulation:
   engine: "mujoco"

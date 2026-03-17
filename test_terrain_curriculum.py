@@ -29,7 +29,7 @@ def test_terrain_generation():
 def test_terrain_curriculum():
     """Test terrain curriculum phases"""
     print("\n" + "="*70)
-    print("TESTING TERRAIN CURRICULUM (20 phases)")
+    print("TESTING TERRAIN CURRICULUM (29 phases)")
     print("="*70)
     
     tc = TerrainCurriculum(num_roughness_levels=10)
@@ -48,7 +48,7 @@ def test_terrain_curriculum():
               f"(roughness={terrain['roughness_level']}, pitch={terrain['pitch_deg']:5.1f}°)")
 
 def test_curriculum_structure():
-    """Verify the expected structure: roughness 0 phases, richness 1 phases, etc."""
+    """Verify expected structure with initial smooth incline levels."""
     print("\n" + "="*70)
     print("VERIFYING CURRICULUM STRUCTURE")
     print("="*70)
@@ -57,7 +57,12 @@ def test_curriculum_structure():
     terrains = tc.get_all_terrains()
     
     print(f"\nTotal phases: {len(terrains)}")
-    print("Expected: 20 phases (10 roughness levels × 2 incline options)")
+    print("Expected: 29 phases (9 smooth incline levels + 10 roughness levels × 2)")
+
+    print("\nInitial smooth incline levels:")
+    for idx in range(9):
+        phase = terrains[idx]
+        print(f"  Phase {idx:2d}: {phase['name']:30s} (pitch={phase['pitch_deg']:5.1f}°)")
     
     # Group by roughness
     by_roughness = {}
@@ -74,12 +79,13 @@ def test_curriculum_structure():
         for phase in phases:
             print(f"    - {phase['name']:30s} (pitch={phase['pitch_deg']:5.1f}°)")
     
-    # Verify alternating pattern
-    print("\nVerifying alternating pattern (flat, inclined, flat, inclined, ...):")
+    # Verify alternating pattern for roughness stages (after first 9 smooth levels)
+    print("\nVerifying roughness-stage alternating pattern (flat, inclined, ...):")
     all_ok = True
-    for i, terrain in enumerate(terrains):
-        phase_num_in_roughness = i % 2
-        expected_incline = 0.0 if phase_num_in_roughness == 0 else -10.0
+    for i, terrain in enumerate(terrains[9:], start=9):
+        phase_num_in_roughness = (i - 9) % 2
+        roughness_idx = (i - 9) // 2
+        expected_incline = 0.0 if phase_num_in_roughness == 0 else -((roughness_idx + 1) / 10.0) * 10.0
         actual_incline = terrain['pitch_deg']
         
         if abs(actual_incline - expected_incline) > 0.01:

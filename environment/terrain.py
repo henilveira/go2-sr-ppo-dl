@@ -29,6 +29,10 @@ def generate_perlin_heightfield(
         2D numpy array with values in [0, 255] (grayscale)
     """
     
+    # Level 0 is a truly flat surface (no height variation).
+    if roughness_level <= 0:
+        return np.full((height, width), 128, dtype=np.uint8)
+
     # Map roughness level to Perlin parameters
     # Lower smoothness = more detail = rougher
     # roughness 0 -> smooth=100 (smooth)
@@ -117,12 +121,24 @@ class TerrainCurriculum:
     def _generate_curriculum(self) -> list:
         """
         Generate curriculum progression.
-        Structure: For each roughness level, first no incline, then with incline.
+        Structure:
+        1) Initial smooth flat terrains with increasing incline (9 levels).
+        2) For each roughness level, first no incline, then with incline.
         
         Returns:
             List of dicts with 'roughness', 'incline_deg', 'pitch_deg' keys
         """
         terrains = []
+
+        # Initial stages: smooth terrain (roughness 0) with progressive incline.
+        # These are the first levels so the robot learns incline adaptation early.
+        for incline_deg in range(1, 10):
+            terrains.append({
+                'name': f'smooth_flat_incline_{incline_deg}',
+                'roughness_level': 0,
+                'pitch_deg': -float(incline_deg),
+                'incline_deg': float(incline_deg),
+            })
         
         for roughness in range(self.num_roughness_levels):
             incline_deg = ((roughness + 1) / self.num_roughness_levels) * 10.0
