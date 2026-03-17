@@ -218,9 +218,20 @@ class Go2Env(gym.Env):
         probabilities = probabilities / probabilities.sum()
         terrain_name = str(np.random.choice(terrain_names, p=probabilities))
 
+        pitch_deg = 0.0
+        if '_l' in terrain_name:
+            try:
+                level = int(terrain_name.rsplit('_l', 1)[1])
+                if terrain_name.startswith('flat_inclined_l') or terrain_name.startswith('rocky_inclined_l') or terrain_name.startswith('rough_l'):
+                    pitch_deg = -(level + 1.0)
+            except ValueError:
+                pitch_deg = 0.0
+        elif 'inclined' in terrain_name or terrain_name == 'rough':
+            pitch_deg = -10.0
+
         self.current_terrain = terrain_name
         self.current_roughness = 0
-        self.current_pitch_deg = -10.0 if ('inclined' in terrain_name or terrain_name == 'rough') else 0.0
+        self.current_pitch_deg = pitch_deg
         return terrain_name
 
     def _place_robot_for_terrain(self, terrain_mode):
@@ -228,19 +239,54 @@ class Go2Env(gym.Env):
         spawn_lift = 0.0
         # Handle both old string-based and new dict-based terrain modes
         if isinstance(terrain_mode, str):
+            incline_center = lambda deg: -0.05 + 1.5 * np.sin(np.deg2rad(deg))
+
+            # Level-tagged staged terrains (e.g., rough_l3, rocky_inclined_l7)
+            if terrain_mode.startswith('flat_inclined_l'):
+                level = int(np.clip(int(terrain_mode.rsplit('_l', 1)[1]), 0, 8))
+                incline_deg = float(level + 1)
+                spawn = {
+                    'pos': [3.25 * level, 12.0, 0.24 + incline_center(incline_deg) + spawn_lift],
+                    'pitch_deg': -incline_deg,
+                    'settle_steps': 80,
+                }
+            elif terrain_mode.startswith('rough_l'):
+                level = int(np.clip(int(terrain_mode.rsplit('_l', 1)[1]), 0, 8))
+                incline_deg = float(level + 1)
+                spawn = {
+                    'pos': [3.0 * level, 9.0, 0.24 + incline_center(incline_deg) + spawn_lift],
+                    'pitch_deg': -incline_deg,
+                    'settle_steps': 80,
+                }
+            elif terrain_mode.startswith('rocky_l'):
+                level = int(np.clip(int(terrain_mode.rsplit('_l', 1)[1]), 0, 9))
+                spawn = {
+                    'pos': [3.25 * level, 3.0, 0.40 + spawn_lift],
+                    'pitch_deg': 0.0,
+                    'settle_steps': 80,
+                }
+            elif terrain_mode.startswith('rocky_inclined_l'):
+                level = int(np.clip(int(terrain_mode.rsplit('_l', 1)[1]), 0, 9))
+                incline_deg = float(level + 1)
+                spawn = {
+                    'pos': [3.25 * level, 6.0, 0.24 + incline_center(incline_deg) + spawn_lift],
+                    'pitch_deg': -incline_deg,
+                    'settle_steps': 80,
+                }
+            else:
             # Legacy mode - keep old behavior for compatibility
-            spawn_map = {
-                'flat': {'pos': [0.0, 0.0, 0.12 + spawn_lift], 'pitch_deg': 0.0, 'settle_steps': 100},
-                'flat_inclined': {'pos': [3.25, 12.0, 0.30 + spawn_lift], 'pitch_deg': -10.0, 'settle_steps': 80},
-                'rocky': {'pos': [0.0, 3.0, 0.40 + spawn_lift], 'pitch_deg': 0.0, 'settle_steps': 80},
-                'rocky_inclined': {'pos': [3.25, 6.0, 0.30 + spawn_lift], 'pitch_deg': -10.0, 'settle_steps': 80},
-                'rough': {'pos': [3.25, 9.0, 0.30 + spawn_lift], 'pitch_deg': -10.0, 'settle_steps': 80},
-                # Backward-compatible aliases
-                'default': {'pos': [0.0, 0.0, 0.12 + spawn_lift], 'pitch_deg': 0.0, 'settle_steps': 100},
-                'inclined': {'pos': [3.25, 6.0, 0.30 + spawn_lift], 'pitch_deg': -10.0, 'settle_steps': 80},
-                'smooth_inclined': {'pos': [3.25, 12.0, 0.30 + spawn_lift], 'pitch_deg': -10.0, 'settle_steps': 80},
-            }
-            spawn = spawn_map.get(terrain_mode, spawn_map['flat'])
+                spawn_map = {
+                    'flat': {'pos': [0.0, 0.0, 0.12 + spawn_lift], 'pitch_deg': 0.0, 'settle_steps': 100},
+                    'flat_inclined': {'pos': [3.25, 12.0, 0.30 + spawn_lift], 'pitch_deg': -10.0, 'settle_steps': 80},
+                    'rocky': {'pos': [0.0, 3.0, 0.40 + spawn_lift], 'pitch_deg': 0.0, 'settle_steps': 80},
+                    'rocky_inclined': {'pos': [3.25, 6.0, 0.30 + spawn_lift], 'pitch_deg': -10.0, 'settle_steps': 80},
+                    'rough': {'pos': [3.25, 9.0, 0.30 + spawn_lift], 'pitch_deg': -10.0, 'settle_steps': 80},
+                    # Backward-compatible aliases
+                    'default': {'pos': [0.0, 0.0, 0.12 + spawn_lift], 'pitch_deg': 0.0, 'settle_steps': 100},
+                    'inclined': {'pos': [3.25, 6.0, 0.30 + spawn_lift], 'pitch_deg': -10.0, 'settle_steps': 80},
+                    'smooth_inclined': {'pos': [3.25, 12.0, 0.30 + spawn_lift], 'pitch_deg': -10.0, 'settle_steps': 80},
+                }
+                spawn = spawn_map.get(terrain_mode, spawn_map['flat'])
         else:
             # New mode - use dynamic terrain config dict
             roughness = terrain_mode.get('roughness_level', 0)

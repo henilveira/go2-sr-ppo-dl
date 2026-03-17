@@ -205,14 +205,65 @@ training:
 
 terrain_curriculum:
   enabled: true
-  mode: "dynamic_roughness"  # Use dynamic terrain generation with 29 phases
-  # Phase structure (auto-generated):
-  # Phases 0-8: Smooth flat terrain with progressive incline (1°..9°)
-  # Phases 9-10: Roughness 0 (smooth) - without/with incline
-  # Phases 11-12: Roughness 1 - without/with incline
-  # ... up to ...
-  # Phases 27-28: Roughness 9 (rough) - without/with incline
-  # Total 29 phases (9 smooth-incline + 10 roughness × 2)
+  mode: "stages"
+  default_terrain: "flat"
+  # Ordered curriculum:
+  # 1) flat -> 2) flat_inclined -> 3) rough -> 4) rocky -> 5) rocky_inclined
+  # Each stage samples all levels of that terrain family.
+  stages:
+    - until_progress: 0.20
+      weights:
+        flat: 1.0
+
+    - until_progress: 0.40
+      weights:
+        flat_inclined_l0: 1.0
+        flat_inclined_l1: 1.0
+        flat_inclined_l2: 1.0
+        flat_inclined_l3: 1.0
+        flat_inclined_l4: 1.0
+        flat_inclined_l5: 1.0
+        flat_inclined_l6: 1.0
+        flat_inclined_l7: 1.0
+        flat_inclined_l8: 1.0
+
+    - until_progress: 0.60
+      weights:
+        rough_l0: 1.0
+        rough_l1: 1.0
+        rough_l2: 1.0
+        rough_l3: 1.0
+        rough_l4: 1.0
+        rough_l5: 1.0
+        rough_l6: 1.0
+        rough_l7: 1.0
+        rough_l8: 1.0
+
+    - until_progress: 0.80
+      weights:
+        rocky_l0: 1.0
+        rocky_l1: 1.0
+        rocky_l2: 1.0
+        rocky_l3: 1.0
+        rocky_l4: 1.0
+        rocky_l5: 1.0
+        rocky_l6: 1.0
+        rocky_l7: 1.0
+        rocky_l8: 1.0
+        rocky_l9: 1.0
+
+    - until_progress: 1.00
+      weights:
+        rocky_inclined_l0: 1.0
+        rocky_inclined_l1: 1.0
+        rocky_inclined_l2: 1.0
+        rocky_inclined_l3: 1.0
+        rocky_inclined_l4: 1.0
+        rocky_inclined_l5: 1.0
+        rocky_inclined_l6: 1.0
+        rocky_inclined_l7: 1.0
+        rocky_inclined_l8: 1.0
+        rocky_inclined_l9: 1.0
   
 simulation:
   engine: "mujoco"
