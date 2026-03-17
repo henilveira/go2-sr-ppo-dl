@@ -57,5 +57,28 @@
     <geom type="hfield" hfield="terrain_level_7" pos="22.75 6.0 0.158759651440098" quat="0.997564050259824 0.0 -0.069756473744125 0.0" />
     <geom type="hfield" hfield="terrain_level_8" pos="26.00 6.0 0.184651697560346" quat="0.996917333733128 0.0 -0.078459095727845 0.0" />
     <geom type="hfield" hfield="terrain_level_9" pos="29.25 6.0 0.210472266500396" quat="0.996194698091746 0.0 -0.087155742747658 0.0" />
+
+    <!-- Row C: rough terrains (non-rocky irregular), gradually inclined (levels 0..8 -> 1deg..9deg) at y=9 -->
+    <!-- Note: x spacing is 3.0 so adjacent tiles touch (no seam gaps that trap feet). -->
+    <geom type="hfield" hfield="terrain_level_1" pos="0.00 9.0 -0.023821390344075" quat="0.999961923064171 0.0 -0.008726535498374 0.0" />
+    <geom type="hfield" hfield="terrain_level_1" pos="3.00 9.0 0.002349245053751" quat="0.999847695156391 0.0 -0.017452406437284 0.0" />
+    <geom type="hfield" hfield="terrain_level_1" pos="6.00 9.0 0.028503934364416" quat="0.999657324975557 0.0 -0.026176948307873 0.0" />
+    <geom type="hfield" hfield="terrain_level_1" pos="9.00 9.0 0.054634710616188" quat="0.999390827019096 0.0 -0.034899496702501 0.0" />
+    <geom type="hfield" hfield="terrain_level_1" pos="12.00 9.0 0.080733614121487" quat="0.999048221581858 0.0 -0.043619387365336 0.0" />
+    <geom type="hfield" hfield="terrain_level_1" pos="15.00 9.0 0.106792694901480" quat="0.998629534754574 0.0 -0.052335956242944 0.0" />
+    <geom type="hfield" hfield="terrain_level_1" pos="18.00 9.0 0.132804015107721" quat="0.998134798421867 0.0 -0.061048539534857 0.0" />
+    <geom type="hfield" hfield="terrain_level_1" pos="21.00 9.0 0.158759651440098" quat="0.997564050259824 0.0 -0.069756473744125 0.0" />
+    <geom type="hfield" hfield="terrain_level_1" pos="24.00 9.0 0.184651697560346" quat="0.996917333733128 0.0 -0.078459095727845 0.0" />
+
+    <!-- Row D: totally smooth inclined pads (box geoms, levels 0..8 -> 1deg..9deg) at y=12 -->
+    <geom type="box" size="1.5 1.5 0.05" pos="0.00 12.0 -0.023821390344075" quat="0.999961923064171 0.0 -0.008726535498374 0.0" />
+    <geom type="box" size="1.5 1.5 0.05" pos="3.25 12.0 0.002349245053751" quat="0.999847695156391 0.0 -0.017452406437284 0.0" />
+    <geom type="box" size="1.5 1.5 0.05" pos="6.50 12.0 0.028503934364416" quat="0.999657324975557 0.0 -0.026176948307873 0.0" />
+    <geom type="box" size="1.5 1.5 0.05" pos="9.75 12.0 0.054634710616188" quat="0.999390827019096 0.0 -0.034899496702501 0.0" />
+    <geom type="box" size="1.5 1.5 0.05" pos="13.00 12.0 0.080733614121487" quat="0.999048221581858 0.0 -0.043619387365336 0.0" />
+    <geom type="box" size="1.5 1.5 0.05" pos="16.25 12.0 0.106792694901480" quat="0.998629534754574 0.0 -0.052335956242944 0.0" />
+    <geom type="box" size="1.5 1.5 0.05" pos="19.50 12.0 0.132804015107721" quat="0.998134798421867 0.0 -0.061048539534857 0.0" />
+    <geom type="box" size="1.5 1.5 0.05" pos="22.75 12.0 0.158759651440098" quat="0.997564050259824 0.0 -0.069756473744125 0.0" />
+    <geom type="box" size="1.5 1.5 0.05" pos="26.00 12.0 0.184651697560346" quat="0.996917333733128 0.0 -0.078459095727845 0.0" />
   </worldbody>
 </mujoco>

@@ -220,7 +220,7 @@ class Go2Env(gym.Env):
 
         self.current_terrain = terrain_name
         self.current_roughness = 0
-        self.current_pitch_deg = -10.0 if 'inclined' in terrain_name else 0.0
+        self.current_pitch_deg = -10.0 if ('inclined' in terrain_name or terrain_name == 'rough') else 0.0
         return terrain_name
 
     def _place_robot_for_terrain(self, terrain_mode):
@@ -230,12 +230,17 @@ class Go2Env(gym.Env):
         if isinstance(terrain_mode, str):
             # Legacy mode - keep old behavior for compatibility
             spawn_map = {
-                'default': {'pos': [0.0, 0.0, 0.12 + spawn_lift], 'pitch_deg': 0.0, 'settle_steps': 100},
-                'inclined': {'pos': [3.25, 0.0, 0.42 + spawn_lift], 'pitch_deg': -10.0, 'settle_steps': 80},
+                'flat': {'pos': [0.0, 0.0, 0.12 + spawn_lift], 'pitch_deg': 0.0, 'settle_steps': 100},
+                'flat_inclined': {'pos': [3.25, 12.0, 0.30 + spawn_lift], 'pitch_deg': -10.0, 'settle_steps': 80},
                 'rocky': {'pos': [0.0, 3.0, 0.40 + spawn_lift], 'pitch_deg': 0.0, 'settle_steps': 80},
-                'rocky_inclined': {'pos': [3.25, 3.0, 0.48 + spawn_lift], 'pitch_deg': -10.0, 'settle_steps': 80},
+                'rocky_inclined': {'pos': [3.25, 6.0, 0.30 + spawn_lift], 'pitch_deg': -10.0, 'settle_steps': 80},
+                'rough': {'pos': [3.25, 9.0, 0.30 + spawn_lift], 'pitch_deg': -10.0, 'settle_steps': 80},
+                # Backward-compatible aliases
+                'default': {'pos': [0.0, 0.0, 0.12 + spawn_lift], 'pitch_deg': 0.0, 'settle_steps': 100},
+                'inclined': {'pos': [3.25, 6.0, 0.30 + spawn_lift], 'pitch_deg': -10.0, 'settle_steps': 80},
+                'smooth_inclined': {'pos': [3.25, 12.0, 0.30 + spawn_lift], 'pitch_deg': -10.0, 'settle_steps': 80},
             }
-            spawn = spawn_map.get(terrain_mode, spawn_map['default'])
+            spawn = spawn_map.get(terrain_mode, spawn_map['flat'])
         else:
             # New mode - use dynamic terrain config dict
             roughness = terrain_mode.get('roughness_level', 0)

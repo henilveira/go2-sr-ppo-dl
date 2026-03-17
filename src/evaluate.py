@@ -187,23 +187,51 @@ def load_trained_model(training_method, model_path, config):
 
 def place_robot_for_terrain(env, terrain_mode, level=0):
     """Place robot on selected terrain family and roughness level in scene.xml."""
-    level = int(np.clip(level, 0, 9))
-    x_pos = 3.25 * level
+    if terrain_mode in {"flat_inclined", "rough"}:
+        level = int(np.clip(level, 0, 8))
+    else:
+        level = int(np.clip(level, 0, 9))
+
+    x_step = 3.0 if terrain_mode == "rough" else 3.25
+    x_pos = x_step * level
     incline_deg = float(level + 1)
     incline_rad = np.deg2rad(incline_deg)
     incline_center_z = -0.05 + 1.5 * np.sin(incline_rad)
-    spawn_lift = 0.0
+
+    # Harder terrains benefit from tiny spawn jitter and extra lift to avoid starts
+    # with immediate foot wedging/contact locking.
+    difficult_terrains = {"rocky", "rocky_inclined", "rough"}
+    if terrain_mode in difficult_terrains:
+        x_pos += np.random.uniform(-0.35, 0.35)
+        y_jitter = np.random.uniform(-0.25, 0.25)
+    else:
+        y_jitter = 0.0
+
+    spawn_lift_map = {
+        "flat": 0.0,
+        "flat_inclined": 0.02,
+        "rocky": 0.06,
+        "rocky_inclined": 0.08,
+        "rough": 0.08,
+        "default": 0.0,
+        "inclined": 0.08,
+        "smooth_inclined": 0.02,
+    }
+    spawn_lift = float(spawn_lift_map.get(terrain_mode, 0.0))
 
     spawn_map = {
+        "flat": {"pos": [0.0, 0.0, 0.12 + spawn_lift], "pitch_deg": 0.0},
+        "flat_inclined": {"pos": [x_pos, 12.0 + y_jitter, 0.24 + incline_center_z + spawn_lift], "pitch_deg": -incline_deg},
+        "rocky": {"pos": [x_pos, 3.0 + y_jitter, 0.40 + spawn_lift], "pitch_deg": 0.0},
+        "rocky_inclined": {"pos": [x_pos, 6.0 + y_jitter, 0.24 + incline_center_z + spawn_lift], "pitch_deg": -incline_deg},
+        "rough": {"pos": [x_pos, 9.0 + y_jitter, 0.24 + incline_center_z + spawn_lift], "pitch_deg": -incline_deg},
+        # Legacy aliases
         "default": {"pos": [0.0, 0.0, 0.12 + spawn_lift], "pitch_deg": 0.0},
-        "flat": {"pos": [x_pos, 3.0, 0.40 + spawn_lift], "pitch_deg": 0.0},
-        "inclined": {"pos": [x_pos, 6.0, 0.24 + incline_center_z + spawn_lift], "pitch_deg": -incline_deg},
-        # Backward-compatible aliases
-        "rocky": {"pos": [x_pos, 3.0, 0.40 + spawn_lift], "pitch_deg": 0.0},
-        "rocky_inclined": {"pos": [x_pos, 6.0, 0.24 + incline_center_z + spawn_lift], "pitch_deg": -incline_deg},
+        "inclined": {"pos": [x_pos, 6.0 + y_jitter, 0.24 + incline_center_z + spawn_lift], "pitch_deg": -incline_deg},
+        "smooth_inclined": {"pos": [x_pos, 12.0 + y_jitter, 0.24 + incline_center_z + spawn_lift], "pitch_deg": -incline_deg},
     }
 
-    spawn = spawn_map.get(terrain_mode, spawn_map["default"])
+    spawn = spawn_map.get(terrain_mode, spawn_map["flat"])
 
     env.data.qpos[0:3] = spawn["pos"]
 
@@ -230,6 +258,41 @@ def place_robot_for_terrain(env, terrain_mode, level=0):
         mujoco.mj_step(env.model, env.data)
 
 
+def place_robot_with_retries(env, terrain_mode, level=0, max_retries=10):
+    """Try multiple placements and keep the first contact-valid spawn."""
+    for attempt in range(max_retries):
+        place_robot_for_terrain(env, terrain_mode, level=level)
+        # Use env validity check when available to reject wedged initial states.
+        if not hasattr(env, "_is_valid_spawn_state"):
+            return True, attempt
+        if env._is_valid_spawn_state():
+            return True, attempt
+    return False, max_retries
+
+
+def place_robot_for_curriculum_phase(env, phase_idx=0):
+    """Place robot using a specific dynamic curriculum phase index."""
+    terrains = env.terrain_curriculum.get_all_terrains()
+    phase_idx = int(np.clip(phase_idx, 0, len(terrains) - 1))
+    terrain_config = terrains[phase_idx]
+    env._place_robot_for_terrain(terrain_config)
+    return phase_idx, terrain_config
+
+
+def place_robot_for_flat_inclined_level(env, level=0):
+    """Place robot on smooth flat inclined row in scene.xml (1..9 deg)."""
+    level = int(np.clip(level, 0, 8))
+    incline_deg = level + 1
+    terrain_config = {
+        "name": f"smooth_flat_incline_{incline_deg}",
+        "roughness_level": 0,
+        "pitch_deg": -float(incline_deg),
+        "incline_deg": float(incline_deg),
+    }
+    place_robot_for_terrain(env, "flat_inclined", level=level)
+    return level, terrain_config
+
+
 def update_viewer_camera(viewer, env):
     """Keep camera centered around robot base position."""
     base_pos = env.data.qpos[0:3]
@@ -238,15 +301,27 @@ def update_viewer_camera(viewer, env):
     viewer.cam.lookat[2] = float(base_pos[2])
 
 
-def evaluate(training_method=None, terrain_mode="default", level=0):
+def evaluate(training_method=None, terrain_mode="default", level=0, random_terrain=False):
     """Evaluate trained model with visualization"""
     training_method = resolve_training_method(training_method)
-    valid_terrains = {"default", "flat", "inclined", "rocky", "rocky_inclined"}
+    valid_terrains = {
+        "flat", "flat_inclined", "rocky", "rocky_inclined", "rough", "curriculum",
+        # Legacy aliases
+        "default", "inclined", "smooth_inclined",
+    }
     if terrain_mode not in valid_terrains:
-        print(f"Unknown terrain '{terrain_mode}', using 'default'.")
-        terrain_mode = "default"
+        print(f"Unknown terrain '{terrain_mode}', using 'flat'.")
+        terrain_mode = "flat"
 
-    level = int(np.clip(level, 0, 9))
+    # Normalize legacy names to the new terrain taxonomy.
+    terrain_aliases = {
+        "default": "flat",
+        "inclined": "rocky_inclined",
+        "smooth_inclined": "flat_inclined",
+    }
+    terrain_mode = terrain_aliases.get(terrain_mode, terrain_mode)
+
+    level = int(level)
     
     print("=" * 70)
     print("Model Evaluation - Go2 Self-Recovery")
@@ -258,7 +333,7 @@ def evaluate(training_method=None, terrain_mode="default", level=0):
     config = load_config()
     config.setdefault("terrain_curriculum", {})
     config["terrain_curriculum"]["enabled"] = False
-    config["terrain_curriculum"]["default_terrain"] = "default"
+    config["terrain_curriculum"]["default_terrain"] = "flat"
     print("   ✓ Config loaded")
     
     # Find model
@@ -287,7 +362,27 @@ def evaluate(training_method=None, terrain_mode="default", level=0):
     
     print("\n4. Starting evaluation...")
     print(f"   Terrain mode: {terrain_mode}")
-    print(f"   Terrain level: {level}")
+    if random_terrain:
+        print("   Terrain sampling: RANDOM per episode")
+        print("   Modes sampled: flat | flat_inclined | rocky | rocky_inclined | rough")
+    else:
+        if terrain_mode in {"flat_inclined", "rough"}:
+            print(f"   Flat inclined level (--level): {int(np.clip(level, 0, 8))} (range: 0-8)")
+            if terrain_mode == "flat_inclined":
+                print("   Mapping: level 0..8 -> incline 1°..9° (totally smooth)")
+            else:
+                print("   Mapping: level 0..8 -> incline 1°..9° (rough, non-rocky)")
+        elif terrain_mode == "rocky_inclined":
+            print(f"   Rocky inclined level (--level): {int(np.clip(level, 0, 9))} (range: 0-9)")
+        elif terrain_mode == "rocky":
+            print(f"   Rocky level (--level): {int(np.clip(level, 0, 9))} (range: 0-9)")
+        elif terrain_mode == "flat":
+            print("   Flat terrain: totally smooth at 0°")
+        elif terrain_mode == "curriculum":
+            max_phase = env.terrain_curriculum.get_terrain_count() - 1
+            print(f"   Curriculum phase (--level): {int(np.clip(level, 0, max_phase))} (range: 0-{max_phase})")
+        else:
+            print(f"   Terrain level: {int(np.clip(level, 0, 9))}")
     print("\nControls:")
     print("  - Double-click + drag: Rotate camera")
     print("  - Right-click + drag: Pan camera")
@@ -308,13 +403,61 @@ def evaluate(training_method=None, terrain_mode="default", level=0):
                 print(f"\n{'='*50}")
                 print(f"Episode {episode}/{total_episodes}")
                 print(f"{'='*50}")
+
+                episode_terrain = terrain_mode
+                episode_level = int(level)
+                if random_terrain:
+                    episode_terrain = str(np.random.choice([
+                        "flat", "flat_inclined", "rocky", "rocky_inclined", "rough"
+                    ]))
+                    if episode_terrain in {"flat_inclined", "rough"}:
+                        episode_level = int(np.random.randint(0, 9))
+                    elif episode_terrain in {"rocky", "rocky_inclined"}:
+                        episode_level = int(np.random.randint(0, 10))
+                    else:
+                        episode_level = 0
+                    print(f"Random terrain draw: {episode_terrain} (level={episode_level})")
                 
                 # Reset environment
                 obs, info = env.reset()
-                if terrain_mode != "default" or level != 0:
-                    place_robot_for_terrain(env, terrain_mode, level=level)
+                if episode_terrain == "flat_inclined":
+                    level_idx, terrain_cfg = place_robot_for_flat_inclined_level(env, level=episode_level)
                     obs = env._get_observation()
                     info = env._get_info()
+                    print(
+                        f"Flat inclined level {level_idx}: {terrain_cfg['name']} "
+                        f"(roughness={terrain_cfg['roughness_level']}, pitch={terrain_cfg['pitch_deg']:.1f}°)"
+                    )
+                elif episode_terrain == "rough":
+                    level_idx = int(np.clip(episode_level, 0, 8))
+                    place_robot_for_terrain(env, "rough", level=level_idx)
+                    obs = env._get_observation()
+                    info = env._get_info()
+                    print(
+                        f"Rough level {level_idx}: "
+                        f"(non-rocky irregular, pitch={-(level_idx + 1):.1f}°)"
+                    )
+                elif episode_terrain == "curriculum":
+                    phase_idx, terrain_cfg = place_robot_for_curriculum_phase(env, phase_idx=episode_level)
+                    obs = env._get_observation()
+                    info = env._get_info()
+                    print(
+                        f"Curriculum phase {phase_idx}: {terrain_cfg['name']} "
+                        f"(roughness={terrain_cfg['roughness_level']}, pitch={terrain_cfg['pitch_deg']:.1f}°)"
+                    )
+                elif episode_terrain != "flat" or episode_level != 0:
+                    spawn_ok, spawn_attempt = place_robot_with_retries(
+                        env,
+                        episode_terrain,
+                        level=int(np.clip(episode_level, 0, 9)),
+                        max_retries=12,
+                    )
+                    obs = env._get_observation()
+                    info = env._get_info()
+                    if not spawn_ok:
+                        print("  Warning: spawn remained contact-heavy after retries.")
+                    elif spawn_attempt > 0:
+                        print(f"  Spawn retries used: {spawn_attempt}")
 
                 update_viewer_camera(viewer, env)
                 print(f"Initial height: {info['base_height']:.3f}m")
@@ -388,25 +531,35 @@ if __name__ == "__main__":
     parser.add_argument(
         "--terrain",
         type=str,
-        default="default",
-        choices=["default", "flat", "inclined", "rocky", "rocky_inclined"],
-        help="Spawn terrain: default | flat | inclined | rocky | rocky_inclined",
+        default="flat",
+        choices=["flat", "flat_inclined", "rocky", "rocky_inclined", "rough", "curriculum", "default", "inclined", "smooth_inclined"],
+        help="Spawn terrain: flat | flat_inclined | rocky | rocky_inclined | rough | curriculum",
     )
     parser.add_argument(
         "--level",
         type=int,
         default=0,
-        help="Terrain roughness level (0-9). Used with --terrain flat/inclined aliases too.",
+        help="Terrain level index. flat_inclined/rough: 0-8. rocky/rocky_inclined: 0-9. curriculum: phase index.",
     )
     parser.add_argument(
         "--inclined",
         action="store_true",
         help="Deprecated alias for --terrain inclined",
     )
+    parser.add_argument(
+        "--random-terrain",
+        action="store_true",
+        help="Sample random terrain (and valid level) at each episode.",
+    )
     args = parser.parse_args()
 
     terrain = args.terrain
-    if args.inclined and terrain == "default":
-        terrain = "inclined"
+    if args.inclined and terrain in {"default", "flat"}:
+        terrain = "rocky_inclined"
 
-    evaluate(training_method=args.model, terrain_mode=terrain, level=args.level)
+    evaluate(
+        training_method=args.model,
+        terrain_mode=terrain,
+        level=args.level,
+        random_terrain=args.random_terrain,
+    )
