@@ -89,7 +89,7 @@ def train():
     
     # Create output directory
     timestamp = datetime.now().strftime("%d-%m-%Y_%H:%M:%S")
-    run_name = f"go2_{timestamp}"
+    run_name = f"PPO_{timestamp}"
     output_dir = project_root / "logs" / "ppo" / run_name
     output_dir.mkdir(parents=True, exist_ok=True)
     print(f"   ✓ Output directory: {output_dir}")

@@ -102,7 +102,7 @@ def train():
     print(f"   ✓ TRPO profile: {trpo_profile}")
 
     timestamp = datetime.now().strftime("%d-%m-%Y_%H:%M:%S")
-    run_name = f"go2_{timestamp}"
+    run_name = f"TRPO_{timestamp}"
     output_dir = project_root / "logs" / "trpo" / run_name
     output_dir.mkdir(parents=True, exist_ok=True)
     print(f"   ✓ Output directory: {output_dir}")
