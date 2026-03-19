@@ -34,6 +34,8 @@ class RewardManager:
         self.prev_feet_contacts = None
         self.contact_switch_count = 0
         self.contact_touchdown_count = 0
+        self.foot_contact_streaks = np.zeros(4, dtype=np.float32)
+        self.four_feet_contact_streak = 0
         
         # Standing pose reference for Go2 (in radians)
         # From MuJoCo menagerie Go2 model - typical standing configuration
@@ -59,11 +61,14 @@ class RewardManager:
         """
         rewards = {}
 
-        # Reset per-episode contact tracking at first env step.
-        if int(info.get('step', 0)) == 0:
+        # Reset per-episode tracking at first env step.
+        # In this env, first step usually arrives as step=1.
+        if int(info.get('step', 0)) <= 1:
             self.prev_feet_contacts = None
             self.contact_switch_count = 0
             self.contact_touchdown_count = 0
+            self.foot_contact_streaks[:] = 0.0
+            self.four_feet_contact_streak = 0
         
         # ========== ALWAYS ACTIVE REWARDS ==========
         
@@ -96,8 +101,13 @@ class RewardManager:
         rewards['foot_contact_touchdowns'] = float(touchdowns)
         rewards['foot_contact_touchdowns_total'] = float(self.contact_touchdown_count)
 
-        # Explicit bonus when all four feet are simultaneously in contact.
-        rewards['R_4fc'] = self._compute_all_feet_contact_bonus(info['feet_contacts'])
+        # Exponential duration rewards for sustained contact.
+        # This makes quick ON/OFF contact switching less rewarding than
+        # maintaining stable, continuous contact.
+        feet_contacts = info['feet_contacts']
+        rewards['R_fc_duration_exp'], rewards['R_4fc_duration_exp'] = self._compute_contact_duration_rewards(feet_contacts)
+        # Keep legacy keys for compatibility with logs/debug tooling.
+        rewards['R_4fc'] = rewards['R_4fc_duration_exp']
         
         # ========== CURRICULUM REWARDS ==========
         # Activate when robot is getting upright (R_g_normalized > threshold)
@@ -112,7 +122,7 @@ class RewardManager:
             rewards['R_jp'] = self._compute_joint_position_reward(obs)
             
             # R_fc: Foot Contact Reward - Paper Table II
-            rewards['R_fc'] = self._compute_foot_contact_reward(info['feet_contacts'])
+            rewards['R_fc'] = rewards['R_fc_duration_exp']
         else:
             rewards['R_h_cl'] = 0.0
             rewards['R_jp'] = 0.0
@@ -178,6 +188,43 @@ class RewardManager:
         switch_ratio = switches / max(len(current), 1)
         touchdown_ratio = touchdowns / max(len(current), 1)
         return switches, switch_ratio, touchdowns, touchdown_ratio
+
+    def _compute_contact_duration_rewards(self, feet_contacts):
+        """Exponential rewards based on contact persistence.
+
+        Returns:
+            r_fc_duration_exp: mean per-foot exponential persistence reward in [0, 1)
+            r_4fc_duration_exp: exponential persistence reward when all 4 feet are down in [0, 1)
+        """
+        current = np.asarray(feet_contacts, dtype=bool)
+        if current.shape[0] != 4:
+            # Keep robust behavior if model contact array changes unexpectedly.
+            current = np.resize(current, 4)
+
+        # Per-foot streak in steps: increments while contact is maintained,
+        # resets immediately when contact is lost.
+        self.foot_contact_streaks = np.where(
+            current,
+            self.foot_contact_streaks + 1.0,
+            0.0,
+        )
+
+        # Global streak for continuous all-4-feet contact.
+        if bool(np.all(current)):
+            self.four_feet_contact_streak += 1
+        else:
+            self.four_feet_contact_streak = 0
+
+        duration_cfg = self.config.get('reward', {}).get('contact_duration', {})
+        foot_alpha = float(duration_cfg.get('foot_alpha', 0.06))
+        all_feet_alpha = float(duration_cfg.get('all_feet_alpha', 0.10))
+
+        # exp-based saturation: fast growth early, then diminishing returns.
+        foot_terms = 1.0 - np.exp(-foot_alpha * self.foot_contact_streaks)
+        r_fc_duration_exp = float(np.mean(foot_terms))
+        r_4fc_duration_exp = float(1.0 - np.exp(-all_feet_alpha * float(self.four_feet_contact_streak)))
+
+        return r_fc_duration_exp, r_4fc_duration_exp
     
     def _get_body_z_in_world(self):
         """Get the z-component of body's up vector in world frame"""
@@ -279,18 +326,9 @@ class RewardManager:
         return reward
     
     def _compute_foot_contact_reward(self, feet_contacts):
-        """
-        Paper Table II: R_fc = 0.25 per foot in contact; otherwise 0
-        
-        Maximum reward = 1.0 when all 4 feet in contact
-        """
+        """Legacy immediate-contact reward kept for backward compatibility."""
         num_contacts = sum(feet_contacts)
-        reward = num_contacts * 0.25
-        return reward
-
-    def _compute_all_feet_contact_bonus(self, feet_contacts):
-        """Binary bonus: 1 when all four feet are in contact, else 0."""
-        return 1.0 if int(sum(feet_contacts)) == 4 else 0.0
+        return num_contacts * 0.25
     
     def _compute_action_difference(self, action, prev_action):
         """
