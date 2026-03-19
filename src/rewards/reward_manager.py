@@ -95,6 +95,9 @@ class RewardManager:
         rewards['R_touchdown_contact'] = touchdown_ratio
         rewards['foot_contact_touchdowns'] = float(touchdowns)
         rewards['foot_contact_touchdowns_total'] = float(self.contact_touchdown_count)
+
+        # Explicit bonus when all four feet are simultaneously in contact.
+        rewards['R_4fc'] = self._compute_all_feet_contact_bonus(info['feet_contacts'])
         
         # ========== CURRICULUM REWARDS ==========
         # Activate when robot is getting upright (R_g_normalized > threshold)
@@ -141,7 +144,8 @@ class RewardManager:
             self.weights['w7'] * rewards['R_v'] +
             self.weights['w8'] * rewards['R_vb'] +
             - self.weights['w9'] * rewards['R_jitter_contact'] +
-            - self.weights['w10'] * rewards['R_touchdown_contact'] +
+            + self.weights.get('w11', 0.0) * rewards['R_4fc'] +
+            # - self.weights['w10'] * rewards['R_touchdown_contact'] +
             0.05 * rewards['R_alive'] +  # Small alive bonus
             0.1 * rewards['R_progress']  # Small progress shaping
         )
@@ -283,6 +287,10 @@ class RewardManager:
         num_contacts = sum(feet_contacts)
         reward = num_contacts * 0.25
         return reward
+
+    def _compute_all_feet_contact_bonus(self, feet_contacts):
+        """Binary bonus: 1 when all four feet are in contact, else 0."""
+        return 1.0 if int(sum(feet_contacts)) == 4 else 0.0
     
     def _compute_action_difference(self, action, prev_action):
         """

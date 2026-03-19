@@ -92,8 +92,9 @@ reward:
     w6: 0.05 # R_ad: Action difference (HIGH - smooth actions)
     w7: 0.005 # R_v: Joint velocity cost (penalize fast joint movements)
     w8: 0.05   # R_vb: Base linear velocity 
-    w9: 0.25    # R_jitter_contact: penalize foot contact state switching (set > 0 to enable)
+    w9: 0.20    # R_jitter_contact: penalize foot contact state switching (set > 0 to enable)
     w10: 0.15    # R_touchdown_contact: penalize number of OFF->ON foot contact events
+    w11: 0.3    # R_4fc: bonus when all four feet are in contact simultaneously
   curriculum:
     enabled: true
     orientation_threshold: 0.4
