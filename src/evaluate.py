@@ -5,6 +5,7 @@ import argparse
 from pathlib import Path
 import yaml
 import time
+import importlib
 import numpy as np
 import mujoco
 import mujoco.viewer
@@ -20,8 +21,20 @@ from stable_baselines3 import PPO, SAC
 from environment.go2_env import Go2Env
 
 
+def _load_trpo_class():
+    """Load TRPO class lazily to keep evaluate usable without sb3-contrib."""
+    try:
+        return importlib.import_module("sb3_contrib").TRPO
+    except Exception:
+        return None
+
+
+TRPO = _load_trpo_class()
+
+
 METHOD_ALIASES = {
     "ppo": "ppo",
+    "trpo": "trpo",
     "sac": "sac",
     "cma-es": "cma-es",
     "cma_es": "cma-es",
@@ -35,6 +48,17 @@ METHOD_SPECS = {
         "logs_subdirs": ["ppo"],
         "type": "sb3",
         "loader": PPO,
+        "candidates": [
+            ("best", "best_model/best_model.zip"),
+            ("final", "final_model.zip"),
+            ("final", "final_model_.zip"),
+            ("interrupted", "interrupted_model.zip"),
+        ],
+    },
+    "trpo": {
+        "logs_subdirs": ["trpo"],
+        "type": "sb3",
+        "loader": TRPO,
         "candidates": [
             ("best", "best_model/best_model.zip"),
             ("final", "final_model.zip"),
@@ -187,6 +211,10 @@ def load_trained_model(training_method, model_path, config):
 
     if method_spec["type"] == "sb3":
         algorithm_class = method_spec["loader"]
+        if algorithm_class is None:
+            raise ImportError(
+                "TRPO support requires sb3-contrib. Install it with: pip install sb3-contrib"
+            )
         return algorithm_class.load(model_path)
 
     cma_config = config.get("cma_es", {})
@@ -591,7 +619,7 @@ if __name__ == "__main__":
         "--model",
         type=str,
         default="ppo",
-        help="Model type: ppo | sac | cma-es | cma",
+        help="Model type: ppo | trpo | sac | cma-es | cma",
     )
     parser.add_argument(
         "--terrain",

@@ -92,9 +92,12 @@ reward:
     w6: 0.05 # R_ad: Action difference (HIGH - smooth actions)
     w7: 0.005 # R_v: Joint velocity cost (penalize fast joint movements)
     w8: 0.05   # R_vb: Base linear velocity 
-    w9: 0.20    # R_jitter_contact: penalize foot contact state switching (set > 0 to enable)
-    w10: 0.15    # R_touchdown_contact: penalize number of OFF->ON foot contact events
-    w11: 0.3    # R_4fc: bonus when all four feet are in contact simultaneously
+    w9: 0.08    # R_jitter_contact: penalize foot contact state switching (too high can induce stiffness)
+    w10: 0.0    # R_touchdown_contact: currently disabled in total reward
+    w11: 0.55   # R_4fc_duration_exp: bonus for sustained 4-feet contact
+  contact_duration:
+    foot_alpha: 0.06      # R_fc_duration_exp = mean(1 - exp(-foot_alpha * streak_i))
+    all_feet_alpha: 0.12  # R_4fc_duration_exp = 1 - exp(-all_feet_alpha * streak_4fc)
   curriculum:
     enabled: true
     orientation_threshold: 0.4
@@ -151,6 +154,24 @@ sac:
   verbose: 1
   tensorboard_log: "./logs/"
 
+trpo:
+  learning_rate: 0.0003
+  n_steps: 2048
+  batch_size: 256
+  gamma: 0.99
+  gae_lambda: 0.95
+  cg_max_steps: 15
+  cg_damping: 0.1
+  line_search_shrinking_factor: 0.8
+  line_search_max_iter: 10
+  n_critic_updates: 10
+  target_kl: 0.01
+  policy_kwargs:
+    net_arch: [256, 256, 128]
+    activation_fn: "relu"
+  verbose: 1
+  tensorboard_log: "./logs/"
+
 # ==================== CMA-ES CONFIGURATION ====================
 # Covariance Matrix Adaptation Evolution Strategy
 # Evolves neural network weights directly (gradient-free)
@@ -202,6 +223,7 @@ training:
   random_joint_positions: true
   total_episodes: 300
   total_timesteps_ppo: 3_686_400
+  total_timesteps_trpo: 3_686_400
   total_timesteps_sac: 3_686_400
   save_freq: 100_000
   eval_freq: 25_000

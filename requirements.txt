@@ -2,6 +2,7 @@ gymnasium
 mujoco
 pin
 stable-baselines3
+sb3-contrib
 torch
 numpy
 matplotlib

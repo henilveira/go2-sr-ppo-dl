@@ -5,7 +5,7 @@ This repository is a **replication** of a self-righting (self-recovery) model or
 ## Technical Overview
 - **Robot**: Unitree Go2 quadruped
 - **Simulator**: MuJoCo rigid-body physics
-- **Learning Algorithm**: Proximal Policy Optimization (PPO)
+- **Learning Algorithms**: PPO, TRPO+GAE, SAC, CMA-ES
 - **Policy**: MLP with ReLU activations (compact architecture aligned with the reference)
 - **Control**: Policy outputs joint position targets, tracked by a PD controller
 
@@ -27,6 +27,11 @@ This repository is a **replication** of a self-righting (self-recovery) model or
 ## Reproducibility Notes
 - Configuration, hyperparameters, and reward weights are centralized in `config/train_config.yml`.
 - Training runs are logged with TensorBoard for analysis of learning curves and evaluation metrics.
+
+## Training Commands
+- PPO: `python src/ppo/train.py`
+- TRPO + GAE: `python src/trpo/train.py`
+- Evaluate TRPO: `python src/evaluate.py --model trpo --terrain flat`
 
 ## Disclaimer
 This is an **independent replication attempt** of a self-righting model from **ITU**. It is not an official release, and results may differ from the original work.
