@@ -4,6 +4,7 @@ Uses TRPO with GAE for advantage estimation.
 """
 
 import sys
+import argparse
 from pathlib import Path
 import yaml
 from datetime import datetime
@@ -43,6 +44,17 @@ def load_config():
     config_path = project_root / "config" / "train_config.yml"
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
+    return config
+
+
+def apply_training_mode(config, training_mode):
+    """Apply runtime terrain mode without removing curriculum logic from codebase."""
+    config.setdefault('terrain_curriculum', {})
+
+    if training_mode == 'flat_only':
+        config['terrain_curriculum']['enabled'] = False
+        config['terrain_curriculum']['default_terrain'] = 'flat'
+
     return config
 
 
@@ -87,7 +99,7 @@ def make_env(config, rank=0):
     return _init
 
 
-def train():
+def train(training_mode='curriculum'):
     """Main TRPO training function."""
     TRPO = _load_trpo_class()
 
@@ -97,9 +109,11 @@ def train():
 
     print("\n1. Loading configuration...")
     config = load_config()
+    config = apply_training_mode(config, training_mode)
     trpo_profile, trpo_config = get_trpo_config(config)
     print("   ✓ Config loaded")
     print(f"   ✓ TRPO profile: {trpo_profile}")
+    print(f"   ✓ Terrain mode: {training_mode}")
 
     timestamp = datetime.now().strftime("%d-%m-%Y_%H:%M:%S")
     run_name = f"TRPO_{timestamp}"
@@ -133,10 +147,13 @@ def train():
     curriculum_monitor = CurriculumMonitorCallback(log_freq=100)
     tensorboard_callback = TensorBoardMetricsCallback(log_freq=1000)
 
-    terrain_curriculum_callback = TerrainCurriculumCallback(
-        total_timesteps=total_timesteps,
-        log_freq=10_000,
-    )
+    terrain_curriculum_enabled = bool(config.get('terrain_curriculum', {}).get('enabled', False))
+    terrain_curriculum_callback = None
+    if terrain_curriculum_enabled:
+        terrain_curriculum_callback = TerrainCurriculumCallback(
+            total_timesteps=total_timesteps,
+            log_freq=10_000,
+        )
 
     checkpoint_callback = CheckpointCallback(
         save_freq=config["training"]["save_freq"] // n_envs,
@@ -154,14 +171,17 @@ def train():
         render=False,
     )
 
-    callback_list = CallbackList([
+    callbacks = [
         reward_logger,
         curriculum_monitor,
-        terrain_curriculum_callback,
         tensorboard_callback,
         checkpoint_callback,
         eval_callback,
-    ])
+    ]
+    if terrain_curriculum_callback is not None:
+        callbacks.insert(2, terrain_curriculum_callback)
+
+    callback_list = CallbackList(callbacks)
     print("   ✓ Callbacks configured")
 
     print("\n5. Creating TRPO model...")
@@ -231,4 +251,13 @@ def train():
 
 
 if __name__ == "__main__":
-    train()
+    parser = argparse.ArgumentParser(description="Train TRPO for Go2 self-recovery")
+    parser.add_argument(
+        "--training-mode",
+        type=str,
+        default="curriculum",
+        choices=["curriculum", "flat_only"],
+        help="curriculum: uses terrain curriculum from config | flat_only: disable curriculum and train only on flat terrain",
+    )
+    args = parser.parse_args()
+    train(training_mode=args.training_mode)
