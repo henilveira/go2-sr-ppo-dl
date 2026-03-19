@@ -41,7 +41,7 @@ class CMAPolicy(nn.Module):
     CMA-ES optimizes the flattened weight vector of this network.
     """
 
-    def __init__(self, obs_dim=30, act_dim=12, hidden_sizes=(128, 128)):
+    def __init__(self, obs_dim=36, act_dim=12, hidden_sizes=(128, 128)):
         super().__init__()
         layers = []
         prev_size = obs_dim
@@ -256,9 +256,15 @@ def train():
 
     # Create policy network
     print("\n2. Creating policy network...")
+    # Read dimensions from environment so policy always matches observation layout.
+    temp_env = Go2Env(config, render_mode=None)
+    obs_dim = int(temp_env.observation_space.shape[0])
+    act_dim = int(temp_env.action_space.shape[0])
+    temp_env.close()
+
     policy = CMAPolicy(
-        obs_dim=30,
-        act_dim=12,
+        obs_dim=obs_dim,
+        act_dim=act_dim,
         hidden_sizes=hidden_sizes,
     )
     num_params = policy.get_num_params()
@@ -329,7 +335,7 @@ def train():
                 from multiprocessing import Pool
                 with Pool(num_workers) as pool:
                     args = [
-                        (sol, policy.__class__(30, 12, hidden_sizes), config, n_eval_episodes)
+                        (sol, policy.__class__(obs_dim, act_dim, hidden_sizes), config, n_eval_episodes)
                         for sol in solutions
                     ]
                     # We need to pass params correctly for multiprocessing

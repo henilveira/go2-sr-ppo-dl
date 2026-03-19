@@ -29,6 +29,11 @@ class RewardManager:
         
         # Curriculum learning flag
         self.curriculum_active = False
+
+        # Contact-jitter tracking (reset at each new episode)
+        self.prev_feet_contacts = None
+        self.contact_switch_count = 0
+        self.contact_touchdown_count = 0
         
         # Standing pose reference for Go2 (in radians)
         # From MuJoCo menagerie Go2 model - typical standing configuration
@@ -53,6 +58,12 @@ class RewardManager:
         Paper reward only (no extra shaping)
         """
         rewards = {}
+
+        # Reset per-episode contact tracking at first env step.
+        if int(info.get('step', 0)) == 0:
+            self.prev_feet_contacts = None
+            self.contact_switch_count = 0
+            self.contact_touchdown_count = 0
         
         # ========== ALWAYS ACTIVE REWARDS ==========
         
@@ -73,6 +84,17 @@ class RewardManager:
         
         # R_vb: Base Linear Velocity Cost - Paper Table II
         rewards['R_vb'] = self._compute_base_velocity_cost(info['base_linear_velocity'])
+
+        # Contact transition metrics:
+        # - switches: any ON/OFF change (jitter proxy)
+        # - touchdowns: only OFF->ON changes (number of contact events)
+        switches, switch_ratio, touchdowns, touchdown_ratio = self._compute_contact_transition_metrics(info['feet_contacts'])
+        rewards['R_jitter_contact'] = switch_ratio
+        rewards['foot_contact_switches'] = float(switches)
+        rewards['foot_contact_switches_total'] = float(self.contact_switch_count)
+        rewards['R_touchdown_contact'] = touchdown_ratio
+        rewards['foot_contact_touchdowns'] = float(touchdowns)
+        rewards['foot_contact_touchdowns_total'] = float(self.contact_touchdown_count)
         
         # ========== CURRICULUM REWARDS ==========
         # Activate when robot is getting upright (R_g_normalized > threshold)
@@ -118,6 +140,8 @@ class RewardManager:
             self.weights['w6'] * rewards['R_ad'] +
             self.weights['w7'] * rewards['R_v'] +
             self.weights['w8'] * rewards['R_vb'] +
+            - self.weights['w9'] * rewards['R_jitter_contact'] +
+            - self.weights['w10'] * rewards['R_touchdown_contact'] +
             0.05 * rewards['R_alive'] +  # Small alive bonus
             0.1 * rewards['R_progress']  # Small progress shaping
         )
@@ -126,6 +150,30 @@ class RewardManager:
         rewards['curriculum_active'] = float(self.curriculum_active)
         
         return total_reward, rewards
+
+    def _compute_contact_transition_metrics(self, feet_contacts):
+        """Return contact-transition metrics for current step.
+
+        Returns:
+            switches: ON/OFF toggles across all feet
+            switch_ratio: switches normalized by number of feet
+            touchdowns: OFF->ON transitions across all feet
+            touchdown_ratio: touchdowns normalized by number of feet
+        """
+        current = np.asarray(feet_contacts, dtype=bool)
+        if self.prev_feet_contacts is None:
+            switches = 0
+            touchdowns = 0
+        else:
+            switches = int(np.sum(current != self.prev_feet_contacts))
+            touchdowns = int(np.sum(np.logical_and(~self.prev_feet_contacts, current)))
+
+        self.prev_feet_contacts = current.copy()
+        self.contact_switch_count += switches
+        self.contact_touchdown_count += touchdowns
+        switch_ratio = switches / max(len(current), 1)
+        touchdown_ratio = touchdowns / max(len(current), 1)
+        return switches, switch_ratio, touchdowns, touchdown_ratio
     
     def _get_body_z_in_world(self):
         """Get the z-component of body's up vector in world frame"""

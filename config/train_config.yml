@@ -22,14 +22,16 @@ robot:
   target_height: 0.27 # Paper: "threshold at 0.31 meter"
 
 # ==================== OBSERVATION SPACE ====================
-# Paper Table I: 30-dimensional observation
+# Extended observation: 36-dimensional observation
 observation:
-  size: 30
+  size: 36
   components:
     joint_positions: 12 # indices 0-11
     joint_velocities: 12 # indices 12-23
     base_orientation: 3 # indices 24-26 (θ_B = R^-1 · g)
     base_angular_velocity: 3 # indices 27-29
+    center_of_mass_position: 3 # indices 30-32 (COM in base frame)
+    center_of_mass_velocity: 3 # indices 33-35 (COM velocity in base frame)
 
   # Add sensor noise (paper: "to replicate real robot")
   add_noise: true
@@ -37,6 +39,8 @@ observation:
     joint_positions: 0.1 # ±0.1 rad
     joint_velocities: 1.0 # ±1.0 rad/s
     base_angular_velocity: 0.2 # ±0.2 rad/s
+    com_position: 0.01 # ±1 cm
+    com_velocity: 0.1 # ±0.1 m/s
 
   # Normalization ranges (eq. 7: map to [-1, 1])
   # These are defaults - run extract_go2_params.py to get exact values
@@ -49,6 +53,10 @@ observation:
     base_orient_max: 1.0
     base_ang_vel_min: -10.0
     base_ang_vel_max: 10.0
+    com_pos_min: [-0.5, -0.5, -0.5]
+    com_pos_max: [0.5, 0.5, 0.5]
+    com_vel_min: [-3.0, -3.0, -3.0]
+    com_vel_max: [3.0, 3.0, 3.0]
 
 # ==================== ACTION SPACE ====================
 # Paper: "12 nodes, each representing the joint position command"
@@ -84,6 +92,8 @@ reward:
     w6: 0.05 # R_ad: Action difference (HIGH - smooth actions)
     w7: 0.005 # R_v: Joint velocity cost (penalize fast joint movements)
     w8: 0.05   # R_vb: Base linear velocity 
+    w9: 0.25    # R_jitter_contact: penalize foot contact state switching (set > 0 to enable)
+    w10: 0.15    # R_touchdown_contact: penalize number of OFF->ON foot contact events
   curriculum:
     enabled: true
     orientation_threshold: 0.4

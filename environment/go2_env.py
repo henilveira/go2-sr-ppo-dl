@@ -17,11 +17,13 @@ class Go2Env(gym.Env):
     """
     Ambiente Gym para self-recovery do Unitree Go2 usando MuJoCo
     
-    Observation space: 30 dimensions
+    Observation space: 36 dimensions
     - 12: joint positions
     - 12: joint velocities  
     - 3: base orientation (R^-1 · g)
     - 3: base angular velocity
+    - 3: center of mass position (base frame)
+    - 3: center of mass velocity (base frame)
     
     Action space: 12 dimensions
     - Target joint positions (normalized to [-1, 1])
@@ -60,7 +62,7 @@ class Go2Env(gym.Env):
         self.observation_space = spaces.Box(
             low=-1.0,
             high=1.0,
-            shape=(30,),
+            shape=(36,),
             dtype=np.float32
         )
 
@@ -81,6 +83,7 @@ class Go2Env(gym.Env):
         self.spawn_is_valid = True
         self.spawn_ncon = 0
         self.spawn_deepest_penetration = 0.0
+        self._prev_com_world = None
         
         # Action smoothing factor (0 = no smoothing, 1 = full smoothing)
         # Higher value = smoother but slower response
@@ -179,6 +182,25 @@ class Go2Env(gym.Env):
         print(f"{'='*50}\n")
         
         print(f"Found {len(self.joint_ids)} joints, {len(self.actuator_ids)} actuators")
+
+        # Cache foot geoms and world ground geoms used by contact checks.
+        self.foot_geom_names = ['FR', 'FL', 'RR', 'RL']
+        self.foot_geom_ids = []
+        for foot_name in self.foot_geom_names:
+            try:
+                self.foot_geom_ids.append(self.model.geom(foot_name).id)
+            except KeyError:
+                self.foot_geom_ids.append(-1)
+                print(f"Warning: Foot geom {foot_name} not found in model")
+
+        # Ground geoms include the MuJoCo floor plus custom terrain geoms in worldbody.
+        # This ensures contacts on user-created terrain planes/hfields are counted too.
+        self.ground_geom_ids = set()
+        for geom_id in range(self.model.ngeom):
+            is_world_geom = int(self.model.geom_bodyid[geom_id]) == 0
+            has_collision = int(self.model.geom_contype[geom_id]) > 0 or int(self.model.geom_conaffinity[geom_id]) > 0
+            if is_world_geom and has_collision:
+                self.ground_geom_ids.add(int(geom_id))
 
     def _sample_terrain_mode(self):
         """Sample terrain from config-driven curriculum (dynamic or legacy staged)."""
@@ -475,6 +497,7 @@ class Go2Env(gym.Env):
         self.step_count = 0
         self.best_recovery_score = self._compute_recovery_score()
         self.steps_since_progress = 0
+        self._prev_com_world = None
         
         observation = self._get_observation()
         info = self._get_info()
@@ -522,7 +545,7 @@ class Go2Env(gym.Env):
         
     def _get_observation(self):
         """
-        Get 30-dimensional observation
+        Get 36-dimensional observation
         Paper Section II.B, Table I
         """
         # Joint positions (12) - usando mapeamento correto!
@@ -540,14 +563,20 @@ class Go2Env(gym.Env):
         
         # Base angular velocity (3) - indices 27-29
         base_angular_vel = self.data.qvel[3:6].copy()  # Angular velocity in world frame
+
+        # Center of mass position/velocity in base frame (6) - indices 30-35
+        com_pos_base = self._get_center_of_mass_in_base_frame()
+        com_vel_base = self._get_center_of_mass_velocity_in_base_frame()
         
         # Concatenate
         obs = np.concatenate([
             joint_positions,      # 12
             joint_velocities,     # 12
             base_orientation,     # 3
-            base_angular_vel      # 3
-        ])  # Total: 30
+            base_angular_vel,     # 3
+            com_pos_base,         # 3
+            com_vel_base,         # 3
+        ])  # Total: 36
         
         # Add noise (paper Section II.B)
         obs = self._add_observation_noise(obs)
@@ -590,6 +619,16 @@ class Go2Env(gym.Env):
             noise_config['base_angular_velocity'],
             size=3
         )
+
+        # COM position noise (indices 30-32)
+        com_pos_noise = float(noise_config.get('com_position', 0.0))
+        if com_pos_noise > 0.0:
+            obs[30:33] += np.random.uniform(-com_pos_noise, com_pos_noise, size=3)
+
+        # COM velocity noise (indices 33-35)
+        com_vel_noise = float(noise_config.get('com_velocity', 0.0))
+        if com_vel_noise > 0.0:
+            obs[33:36] += np.random.uniform(-com_vel_noise, com_vel_noise, size=3)
         
         return obs
         
@@ -626,12 +665,56 @@ class Go2Env(gym.Env):
             norm_config['base_ang_vel_max'],
             -1.0, 1.0
         )
+
+        # COM position in base frame (30-32)
+        obs[30:33] = self._normalize_values(
+            obs[30:33],
+            np.asarray(norm_config.get('com_pos_min', [-0.5, -0.5, -0.5]), dtype=np.float32),
+            np.asarray(norm_config.get('com_pos_max', [0.5, 0.5, 0.5]), dtype=np.float32),
+            -1.0, 1.0
+        )
+        obs[30:33] = np.clip(obs[30:33], -1.0, 1.0)
+
+        # COM velocity in base frame (33-35)
+        obs[33:36] = self._normalize_values(
+            obs[33:36],
+            np.asarray(norm_config.get('com_vel_min', [-3.0, -3.0, -3.0]), dtype=np.float32),
+            np.asarray(norm_config.get('com_vel_max', [3.0, 3.0, 3.0]), dtype=np.float32),
+            -1.0, 1.0
+        )
+        obs[33:36] = np.clip(obs[33:36], -1.0, 1.0)
         
         return obs
         
     def _normalize_values(self, values, x_min, x_max, y_min, y_max):
         """Apply eq. (7) from paper"""
         return y_min + (y_max - y_min) / (x_max - x_min) * (values - x_min)
+
+    def _get_center_of_mass_world(self):
+        """Return whole-robot COM in world frame from MuJoCo subtree COM."""
+        base_body_id = self.model.body('base').id
+        return self.data.subtree_com[base_body_id].copy()
+
+    def _get_center_of_mass_in_base_frame(self):
+        """Return whole-robot COM in base frame."""
+        com_world = self._get_center_of_mass_world()
+        base_position = self.data.qpos[0:3]
+        base_rotation = self._quat_to_matrix(self.data.qpos[3:7])
+        return base_rotation.T @ (com_world - base_position)
+
+    def _get_center_of_mass_velocity_in_base_frame(self):
+        """Estimate COM linear velocity and express it in base frame."""
+        com_world = self._get_center_of_mass_world()
+
+        if self._prev_com_world is None:
+            com_vel_world = np.zeros(3, dtype=np.float64)
+        else:
+            dt = max(self.con_dt, 1e-6)
+            com_vel_world = (com_world - self._prev_com_world) / dt
+
+        self._prev_com_world = com_world
+        base_rotation = self._quat_to_matrix(self.data.qpos[3:7])
+        return base_rotation.T @ com_vel_world
         
     def _scale_action(self, action):
         """
@@ -725,6 +808,7 @@ class Go2Env(gym.Env):
         # Foot contacts (for foot contact reward)
         # Need to check which geoms are in contact with ground
         feet_contacts = self._get_feet_contacts()
+        feet_contact_count = int(sum(feet_contacts))
         
         # Base velocity
         base_linear_vel = self.data.qvel[0:3]
@@ -735,6 +819,7 @@ class Go2Env(gym.Env):
         return {
             'base_height': base_height,
             'feet_contacts': feet_contacts,
+            'feet_contact_count': feet_contact_count,
             'base_linear_velocity': base_linear_vel,
             'uprightness': uprightness,
             'orientation_error': 1.0 - uprightness,
@@ -756,41 +841,28 @@ class Go2Env(gym.Env):
         Check which feet are in contact with ground
         Returns list of 4 booleans [FR, FL, RR, RL]
         """
-        # Feet geom names in Go2 model (from mujoco_menagerie)
-        feet_geom_names = [
-            'FR',  # Front Right foot
-            'FL',  # Front Left foot
-            'RR',  # Rear Right foot
-            'RL'   # Rear Left foot
-        ]
-        
         contacts = [False] * 4
-        
-        # Get floor geom ID (usually 0, but let's be safe)
-        try:
-            floor_id = self.model.geom('floor').id
-        except KeyError:
-            floor_id = 0  # Assume floor is geom 0
+
+        foot_ids = getattr(self, 'foot_geom_ids', [])
+        ground_ids = getattr(self, 'ground_geom_ids', set())
+        if not foot_ids or not ground_ids:
+            return contacts
         
         # Check all contacts
         for i in range(self.data.ncon):
             contact = self.data.contact[i]
             
             # Get geom IDs in contact
-            geom1 = contact.geom1
-            geom2 = contact.geom2
+            geom1 = int(contact.geom1)
+            geom2 = int(contact.geom2)
             
-            # Check if it's a foot-ground contact
-            for j, foot_name in enumerate(feet_geom_names):
-                try:
-                    foot_geom_id = self.model.geom(foot_name).id
-                    
-                    # Check if foot is in contact with ground
-                    if (geom1 == foot_geom_id and geom2 == floor_id) or \
-                       (geom2 == foot_geom_id and geom1 == floor_id):
-                        contacts[j] = True
-                except KeyError:
-                    pass  # Geom name not found
+            # Check if it's a foot-ground contact (ground can be floor or custom terrain geoms).
+            for j, foot_geom_id in enumerate(foot_ids):
+                if foot_geom_id < 0:
+                    continue
+                if (geom1 == foot_geom_id and geom2 in ground_ids) or \
+                   (geom2 == foot_geom_id and geom1 in ground_ids):
+                    contacts[j] = True
         
         return contacts
         

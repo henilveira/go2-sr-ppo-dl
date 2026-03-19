@@ -79,7 +79,7 @@ METHOD_SPECS = {
 class CMAPolicy(nn.Module):
     """Policy MLP compatible with models saved by CMA-ES training."""
 
-    def __init__(self, obs_dim=30, act_dim=12, hidden_sizes=(128, 128)):
+    def __init__(self, obs_dim=36, act_dim=12, hidden_sizes=(128, 128)):
         super().__init__()
         layers = []
         prev_size = obs_dim
@@ -102,6 +102,7 @@ class CMAModelWrapper:
 
     def __init__(self, policy):
         self.policy = policy
+        self.obs_dim = int(policy.net[0].in_features)
 
     def predict(self, obs, deterministic=True):
         with torch.no_grad():
@@ -116,6 +117,20 @@ def resolve_training_method(training_method):
         print(f"Unknown method '{training_method}', using 'ppo' as default.")
         return "ppo"
     return canonical
+
+
+def adapt_observation_for_model(obs: np.ndarray, expected_dim) -> np.ndarray:
+    """Trim or pad observation to match model input size."""
+    if expected_dim is None or expected_dim <= 0:
+        return obs
+    if obs.shape[0] == expected_dim:
+        return obs
+    if obs.shape[0] > expected_dim:
+        return obs[:expected_dim]
+
+    padded = np.zeros(expected_dim, dtype=obs.dtype)
+    padded[:obs.shape[0]] = obs
+    return padded
 
 
 def load_config():
@@ -176,9 +191,18 @@ def load_trained_model(training_method, model_path, config):
 
     cma_config = config.get("cma_es", {})
     hidden_sizes = tuple(cma_config.get("hidden_sizes", [128, 128]))
-    policy = CMAPolicy(obs_dim=30, act_dim=12, hidden_sizes=hidden_sizes)
-
     state_dict = torch.load(model_path, map_location="cpu")
+
+    # Infer observation dimension from checkpoint for backward compatibility.
+    # Old models may have obs_dim=30 while new models use obs_dim=36.
+    first_linear_key = None
+    for key in state_dict.keys():
+        if key.endswith("0.weight"):
+            first_linear_key = key
+            break
+    inferred_obs_dim = int(state_dict[first_linear_key].shape[1]) if first_linear_key else 36
+
+    policy = CMAPolicy(obs_dim=inferred_obs_dim, act_dim=12, hidden_sizes=hidden_sizes)
     policy.load_state_dict(state_dict)
     policy.eval()
 
@@ -301,6 +325,32 @@ def update_viewer_camera(viewer, env):
     viewer.cam.lookat[2] = float(base_pos[2])
 
 
+def _foot_contact_label(feet_contacts):
+    """Return human-readable per-foot contact labels."""
+    labels = ["FR", "FL", "RR", "RL"]
+    values = []
+    for i, label in enumerate(labels):
+        in_contact = bool(feet_contacts[i]) if i < len(feet_contacts) else False
+        values.append(f"{label}: {'ON' if in_contact else 'OFF'}")
+    return values
+
+
+def print_contact_terminal(info, step):
+    """Print per-foot contact states and total contact count in terminal."""
+    feet_contacts = info.get("feet_contacts", [False, False, False, False])
+    contact_count = int(info.get("feet_contact_count", int(sum(feet_contacts))))
+    rb = info.get("reward_breakdown", {})
+    touchdowns_step = int(rb.get("foot_contact_touchdowns", 0.0))
+    touchdowns_total = int(rb.get("foot_contact_touchdowns_total", 0.0))
+    labels = _foot_contact_label(feet_contacts)
+    line = (
+        f"  Contacts | Step {step:4d} | Count: {contact_count} | "
+        f"Touch: {touchdowns_step} (tot {touchdowns_total}) | "
+        f"{labels[0]} | {labels[1]} | {labels[2]} | {labels[3]}"
+    )
+    print(f"\r{line}", end="", flush=True)
+
+
 def evaluate(training_method=None, terrain_mode="default", level=0, random_terrain=False):
     """Evaluate trained model with visualization"""
     training_method = resolve_training_method(training_method)
@@ -354,6 +404,15 @@ def evaluate(training_method=None, terrain_mode="default", level=0, random_terra
     except Exception as e:
         print(f"   ✗ Error loading model: {e}")
         return
+
+    expected_obs_dim = None
+    if hasattr(model, "observation_space") and model.observation_space is not None:
+        expected_obs_dim = int(model.observation_space.shape[0])
+    elif hasattr(model, "obs_dim"):
+        expected_obs_dim = int(model.obs_dim)
+
+    if expected_obs_dim is not None:
+        print(f"   Model observation dim: {expected_obs_dim}")
     
     # Create environment
     print("\n3. Creating environment...")
@@ -460,6 +519,7 @@ def evaluate(training_method=None, terrain_mode="default", level=0, random_terra
                         print(f"  Spawn retries used: {spawn_attempt}")
 
                 update_viewer_camera(viewer, env)
+                print_contact_terminal(info, step=0)
                 print(f"Initial height: {info['base_height']:.3f}m")
                 
                 episode_reward = 0
@@ -469,7 +529,8 @@ def evaluate(training_method=None, terrain_mode="default", level=0, random_terra
                 # Run episode with trained policy
                 while not done and viewer.is_running():
                     # Get action from trained policy
-                    action, _states = model.predict(obs, deterministic=True)
+                    model_obs = adapt_observation_for_model(obs, expected_obs_dim)
+                    action, _states = model.predict(model_obs, deterministic=True)
                     
                     # Step environment
                     obs, reward, terminated, truncated, info = env.step(action)
@@ -478,6 +539,7 @@ def evaluate(training_method=None, terrain_mode="default", level=0, random_terra
                     
                     # Sync viewer
                     update_viewer_camera(viewer, env)
+                    print_contact_terminal(info, step=step)
                     viewer.sync()
                     
                     # Print progress every 100 steps
@@ -492,6 +554,9 @@ def evaluate(training_method=None, terrain_mode="default", level=0, random_terra
                 
                 if not viewer.is_running():
                     break
+
+                # End the in-place contact status line before summary prints.
+                print()
                 
                 print(f"\nEpisode Results:")
                 print(f"  - Steps: {step}")
