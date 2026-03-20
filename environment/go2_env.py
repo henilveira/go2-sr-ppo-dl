@@ -812,6 +812,8 @@ class Go2Env(gym.Env):
         
         # Base velocity
         base_linear_vel = self.data.qvel[0:3]
+        com_world = self._get_center_of_mass_world()
+        feet_positions_xy = self._get_feet_world_positions_xy()
 
         uprightness = self._get_uprightness()
         recovery_score = self._compute_recovery_score()
@@ -819,8 +821,10 @@ class Go2Env(gym.Env):
         return {
             'base_height': base_height,
             'feet_contacts': feet_contacts,
+            'feet_positions_xy': feet_positions_xy,
             'feet_contact_count': feet_contact_count,
             'base_linear_velocity': base_linear_vel,
+            'com_world_xy': com_world[0:2],
             'uprightness': uprightness,
             'orientation_error': 1.0 - uprightness,
             'recovery_score': recovery_score,
@@ -835,6 +839,17 @@ class Go2Env(gym.Env):
             'spawn_deepest_penetration': self.spawn_deepest_penetration,
             'step': self.step_count
         }
+
+    def _get_feet_world_positions_xy(self):
+        """Return each foot geom world position projected on XY plane."""
+        feet_xy = np.full((4, 2), np.nan, dtype=np.float64)
+        foot_ids = getattr(self, 'foot_geom_ids', [])
+
+        for i, geom_id in enumerate(foot_ids):
+            if geom_id >= 0:
+                feet_xy[i] = self.data.geom_xpos[int(geom_id)][0:2]
+
+        return feet_xy
         
     def _get_feet_contacts(self):
         """

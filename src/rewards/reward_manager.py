@@ -36,6 +36,7 @@ class RewardManager:
         self.contact_touchdown_count = 0
         self.foot_contact_streaks = np.zeros(4, dtype=np.float32)
         self.four_feet_contact_streak = 0
+        self.stable_support_streak = 0
         
         # Standing pose reference for Go2 (in radians)
         # From MuJoCo menagerie Go2 model - typical standing configuration
@@ -69,6 +70,7 @@ class RewardManager:
             self.contact_touchdown_count = 0
             self.foot_contact_streaks[:] = 0.0
             self.four_feet_contact_streak = 0
+            self.stable_support_streak = 0
         
         # ========== ALWAYS ACTIVE REWARDS ==========
         
@@ -108,6 +110,12 @@ class RewardManager:
         rewards['R_fc_duration_exp'], rewards['R_4fc_duration_exp'] = self._compute_contact_duration_rewards(feet_contacts)
         # Keep legacy keys for compatibility with logs/debug tooling.
         rewards['R_4fc'] = rewards['R_4fc_duration_exp']
+
+        # Support-polygon stabilizer reward based on CoM projection and
+        # largest inscribed circle approximation over the stance polygon.
+        stability_reward, stability_metrics = self._compute_support_stability_reward(info)
+        rewards['R_stability'] = stability_reward
+        rewards.update(stability_metrics)
         
         # ========== CURRICULUM REWARDS ==========
         # Activate when robot is getting upright (R_g_normalized > threshold)
@@ -155,6 +163,7 @@ class RewardManager:
             self.weights['w8'] * rewards['R_vb'] +
             - self.weights['w9'] * rewards['R_jitter_contact'] +
             + self.weights.get('w11', 0.0) * rewards['R_4fc'] +
+            + self.weights.get('w12', 0.0) * rewards['R_stability'] +
             # - self.weights['w10'] * rewards['R_touchdown_contact'] +
             0.05 * rewards['R_alive'] +  # Small alive bonus
             0.1 * rewards['R_progress']  # Small progress shaping
@@ -225,6 +234,209 @@ class RewardManager:
         r_4fc_duration_exp = float(1.0 - np.exp(-all_feet_alpha * float(self.four_feet_contact_streak)))
 
         return r_fc_duration_exp, r_4fc_duration_exp
+
+    def _compute_support_stability_reward(self, info):
+        """Compute support-polygon stability reward from feet contacts and CoM projection."""
+        default_metrics = {
+            'support_polygon_area': 0.0,
+            'support_incircle_radius': 0.0,
+            'support_com_to_center_dist': 0.0,
+            'support_safe_radius': 0.0,
+            'support_edge_margin': -1.0,
+            'support_com_inside_safe_circle': 0.0,
+            'support_stability_streak': float(self.stable_support_streak),
+        }
+
+        feet_contacts = np.asarray(info.get('feet_contacts', []), dtype=bool)
+        feet_positions_xy = np.asarray(info.get('feet_positions_xy', []), dtype=np.float64)
+        com_world_xy = np.asarray(info.get('com_world_xy', []), dtype=np.float64)
+
+        if feet_contacts.size == 0 or feet_positions_xy.size == 0 or com_world_xy.size != 2:
+            self.stable_support_streak = 0
+            default_metrics['support_stability_streak'] = 0.0
+            return 0.0, default_metrics
+
+        contact_points = []
+        for i in range(min(len(feet_contacts), len(feet_positions_xy))):
+            if feet_contacts[i] and np.all(np.isfinite(feet_positions_xy[i])):
+                contact_points.append(feet_positions_xy[i])
+
+        if len(contact_points) < 3:
+            self.stable_support_streak = 0
+            default_metrics['support_stability_streak'] = 0.0
+            return 0.0, default_metrics
+
+        points = np.asarray(contact_points, dtype=np.float64)
+        hull = self._convex_hull_2d(points)
+        if hull.shape[0] < 3:
+            self.stable_support_streak = 0
+            default_metrics['support_stability_streak'] = 0.0
+            return 0.0, default_metrics
+
+        circle_center, circle_radius = self._approx_max_inscribed_circle(hull)
+        com_to_center = float(np.linalg.norm(com_world_xy - circle_center))
+
+        stabilizer_cfg = self.config.get('reward', {}).get('stabilizer', {})
+        com_radius = float(stabilizer_cfg.get('com_projection_radius', 0.05))
+        area_target = float(stabilizer_cfg.get('target_polygon_area', 0.03))
+        radius_target = float(stabilizer_cfg.get('target_incircle_radius', 0.09))
+        streak_alpha = float(stabilizer_cfg.get('streak_alpha', 0.03))
+        w_position = float(stabilizer_cfg.get('position_weight', 0.45))
+        w_circle = float(stabilizer_cfg.get('incircle_weight', 0.25))
+        w_area = float(stabilizer_cfg.get('area_weight', 0.20))
+        w_time = float(stabilizer_cfg.get('time_weight', 0.10))
+
+        safe_radius = max(circle_radius - com_radius, 0.0)
+        edge_margin = safe_radius - com_to_center
+        com_inside_safe = (safe_radius > 0.0) and (edge_margin >= 0.0)
+
+        if bool(np.all(feet_contacts)) and com_inside_safe:
+            self.stable_support_streak += 1
+        else:
+            self.stable_support_streak = 0
+
+        area = self._polygon_area_2d(hull)
+        position_score = np.clip(edge_margin / max(safe_radius, 1e-6), 0.0, 1.0) if safe_radius > 0.0 else 0.0
+        circle_score = np.clip(circle_radius / max(radius_target, 1e-6), 0.0, 1.0)
+        area_score = np.clip(area / max(area_target, 1e-6), 0.0, 1.0)
+        time_score = float(1.0 - np.exp(-streak_alpha * float(self.stable_support_streak)))
+
+        total_weight = max(w_position + w_circle + w_area + w_time, 1e-6)
+        reward = (
+            w_position * position_score +
+            w_circle * circle_score +
+            w_area * area_score +
+            w_time * time_score
+        ) / total_weight
+
+        metrics = {
+            'support_polygon_area': float(area),
+            'support_incircle_radius': float(circle_radius),
+            'support_com_to_center_dist': com_to_center,
+            'support_safe_radius': float(safe_radius),
+            'support_edge_margin': float(edge_margin),
+            'support_com_inside_safe_circle': float(com_inside_safe),
+            'support_stability_streak': float(self.stable_support_streak),
+        }
+        return float(reward), metrics
+
+    def _convex_hull_2d(self, points):
+        """Return convex hull vertices in counter-clockwise order."""
+        if points.shape[0] <= 1:
+            return points.copy()
+
+        unique_points = np.unique(points, axis=0)
+        if unique_points.shape[0] <= 1:
+            return unique_points
+
+        sorted_points = unique_points[np.lexsort((unique_points[:, 1], unique_points[:, 0]))]
+
+        def cross(o, a, b):
+            oa = a - o
+            ob = b - o
+            return oa[0] * ob[1] - oa[1] * ob[0]
+
+        lower = []
+        for p in sorted_points:
+            while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+                lower.pop()
+            lower.append(p)
+
+        upper = []
+        for p in reversed(sorted_points):
+            while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+                upper.pop()
+            upper.append(p)
+
+        hull = np.vstack((lower[:-1], upper[:-1]))
+        return hull
+
+    def _polygon_area_2d(self, polygon):
+        """Compute polygon area with shoelace formula."""
+        if polygon.shape[0] < 3:
+            return 0.0
+        x = polygon[:, 0]
+        y = polygon[:, 1]
+        return float(0.5 * np.abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))))
+
+    def _approx_max_inscribed_circle(self, polygon):
+        """Approximate maximum inscribed circle center/radius for convex polygon."""
+        center = np.mean(polygon, axis=0)
+        best_center = center.copy()
+        best_radius = self._point_to_polygon_boundary_distance(best_center, polygon)
+
+        bbox_span = np.max(np.ptp(polygon, axis=0))
+        step = max(0.25 * bbox_span, 1e-3)
+        directions = np.array([
+            [1.0, 0.0], [-1.0, 0.0],
+            [0.0, 1.0], [0.0, -1.0],
+            [1.0, 1.0], [1.0, -1.0],
+            [-1.0, 1.0], [-1.0, -1.0],
+        ], dtype=np.float64)
+        directions = directions / np.linalg.norm(directions, axis=1, keepdims=True)
+
+        for _ in range(24):
+            improved = False
+            for direction in directions:
+                candidate = best_center + step * direction
+                if not self._point_inside_convex_polygon(candidate, polygon):
+                    continue
+                candidate_radius = self._point_to_polygon_boundary_distance(candidate, polygon)
+                if candidate_radius > best_radius:
+                    best_radius = candidate_radius
+                    best_center = candidate
+                    improved = True
+            if not improved:
+                step *= 0.5
+            if step < 1e-4:
+                break
+
+        return best_center, float(best_radius)
+
+    def _point_inside_convex_polygon(self, point, polygon):
+        """Check if point is inside or on boundary of a convex polygon."""
+        n = polygon.shape[0]
+        if n < 3:
+            return False
+
+        eps = 1e-9
+        sign = 0.0
+        for i in range(n):
+            a = polygon[i]
+            b = polygon[(i + 1) % n]
+            edge = b - a
+            to_point = point - a
+            cross_z = edge[0] * to_point[1] - edge[1] * to_point[0]
+            if abs(cross_z) <= eps:
+                continue
+            if sign == 0.0:
+                sign = np.sign(cross_z)
+            elif np.sign(cross_z) != sign:
+                return False
+        return True
+
+    def _point_to_polygon_boundary_distance(self, point, polygon):
+        """Minimum Euclidean distance from a point to polygon edges."""
+        min_dist = np.inf
+        n = polygon.shape[0]
+        for i in range(n):
+            a = polygon[i]
+            b = polygon[(i + 1) % n]
+            dist = self._point_to_segment_distance(point, a, b)
+            if dist < min_dist:
+                min_dist = dist
+        return float(min_dist)
+
+    def _point_to_segment_distance(self, p, a, b):
+        """Distance from point p to segment ab."""
+        ab = b - a
+        denom = float(np.dot(ab, ab))
+        if denom <= 1e-12:
+            return float(np.linalg.norm(p - a))
+        t = float(np.dot(p - a, ab) / denom)
+        t = np.clip(t, 0.0, 1.0)
+        projection = a + t * ab
+        return float(np.linalg.norm(p - projection))
     
     def _get_body_z_in_world(self):
         """Get the z-component of body's up vector in world frame"""

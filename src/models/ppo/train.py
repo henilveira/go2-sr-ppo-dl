@@ -24,7 +24,7 @@ from stable_baselines3.common.monitor import Monitor
 import torch
 
 from environment.go2_env import Go2Env
-from src.utils.callbacks import RewardLoggerCallback, CurriculumMonitorCallback, TensorBoardMetricsCallback, TerrainCurriculumCallback
+from src.utils.callbacks import RewardLoggerCallback, CurriculumMonitorCallback, TensorBoardMetricsCallback, TerrainCurriculumCallback, StabilityMetricsCallback
 
 
 def load_config():
@@ -51,7 +51,7 @@ def get_ppo_config(config):
     if 'ppo' in config:
         return 'ppo', config['ppo']
 
-    profile_name = config.get('training', {}).get('ppo_profile', 'improved_ppo')
+    profile_name = config.get('training', {}).get('ppo_profile', 'paper_ppo')
     if profile_name not in config:
         available_profiles = [key for key in config.keys() if key.endswith('_ppo')]
         raise KeyError(
@@ -143,6 +143,9 @@ def train(training_mode='curriculum'):
     # Curriculum monitor
     curriculum_monitor = CurriculumMonitorCallback(log_freq=100)
     
+    # Stability metrics - print to terminal
+    stability_logger = StabilityMetricsCallback(log_freq=10)  # Log every 10 rollouts
+    
     # TensorBoard metrics - log custom metrics (time, SPS, etc.)
     tensorboard_callback = TensorBoardMetricsCallback(log_freq=1000)  # Every 1k steps
 
@@ -175,6 +178,7 @@ def train(training_mode='curriculum'):
     callbacks = [
         reward_logger,
         curriculum_monitor,
+        stability_logger,
         tensorboard_callback,
         checkpoint_callback,
         eval_callback,

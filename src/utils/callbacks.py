@@ -82,6 +82,98 @@ class CurriculumMonitorCallback(BaseCallback):
             self.curriculum_activations = []
 
 
+class StabilityMetricsCallback(BaseCallback):
+    """
+    Print stability metrics (support polygon, incircle, CoM margin) to terminal
+    during training for quick inspection without TensorBoard.
+    """
+    
+    def __init__(self, log_freq=10, verbose=0):
+        super().__init__(verbose)
+        self.log_freq = log_freq  # Log every N rollouts
+        self.rollout_count = 0
+        self.stability_metrics = {
+            'rewards': [],
+            'polygon_areas': [],
+            'incircle_radii': [],
+            'safe_radii': [],
+            'edge_margins': [],
+            'streaks': [],
+            'inside_safe': []
+        }
+    
+    def _on_step(self) -> bool:
+        return True
+    
+    def _on_rollout_end(self) -> None:
+        """Collect and print stability metrics periodically"""
+        self.rollout_count += 1
+        
+        # Collect metrics from current rollout
+        if hasattr(self.locals, 'infos') and self.locals['infos']:
+            for info in self.locals['infos']:
+                if 'reward_breakdown' in info:
+                    rb = info['reward_breakdown']
+                    if 'R_stability' in rb:
+                        self.stability_metrics['rewards'].append(float(rb['R_stability']))
+                    if 'support_polygon_area' in rb:
+                        self.stability_metrics['polygon_areas'].append(float(rb['support_polygon_area']))
+                    if 'support_incircle_radius' in rb:
+                        self.stability_metrics['incircle_radii'].append(float(rb['support_incircle_radius']))
+                    if 'support_safe_radius' in rb:
+                        self.stability_metrics['safe_radii'].append(float(rb['support_safe_radius']))
+                    if 'support_edge_margin' in rb:
+                        self.stability_metrics['edge_margins'].append(float(rb['support_edge_margin']))
+                    if 'support_stability_streak' in rb:
+                        self.stability_metrics['streaks'].append(float(rb['support_stability_streak']))
+                    if 'support_com_inside_safe_circle' in rb:
+                        self.stability_metrics['inside_safe'].append(float(rb['support_com_inside_safe_circle']))
+        
+        # Print periodically
+        if self.rollout_count % self.log_freq == 0:
+            self._print_stability_summary()
+            # Clear metrics for next period
+            for key in self.stability_metrics:
+                self.stability_metrics[key] = []
+    
+    def _print_stability_summary(self):
+        """Print a formatted stability metrics summary"""
+        metrics = self.stability_metrics
+        
+        print(f"\n{'='*75}")
+        print(f"[STABILITY METRICS] Rollout {self.rollout_count} | Steps: {self.num_timesteps:,}")
+        print(f"{'='*75}")
+        
+        if metrics['rewards']:
+            print(f"  R_stability:        {np.mean(metrics['rewards']):7.4f} ± {np.std(metrics['rewards']):.4f}")
+        
+        if metrics['inside_safe']:
+            inside_rate = np.mean(metrics['inside_safe'])
+            print(f"  CoM inside safe:    {inside_rate*100:6.1f}% of steps")
+        
+        if metrics['edge_margins']:
+            edge_mean = np.mean(metrics['edge_margins'])
+            edge_min = np.min(metrics['edge_margins'])
+            print(f"  Edge margin:        mean={edge_mean:7.4f}m, min={edge_min:7.4f}m")
+        
+        if metrics['incircle_radii']:
+            radius_mean = np.mean(metrics['incircle_radii'])
+            radius_max = np.max(metrics['incircle_radii'])
+            print(f"  Incircle radius:    mean={radius_mean:7.4f}m, max={radius_max:7.4f}m")
+        
+        if metrics['polygon_areas']:
+            area_mean = np.mean(metrics['polygon_areas'])
+            area_max = np.max(metrics['polygon_areas'])
+            print(f"  Support area:       mean={area_mean:7.4f}m², max={area_max:7.4f}m²")
+        
+        if metrics['streaks']:
+            streak_mean = np.mean(metrics['streaks'])
+            streak_max = np.max(metrics['streaks'])
+            print(f"  Stability streak:   mean={streak_mean:7.1f} steps, max={streak_max:7.1f} steps")
+        
+        print(f"{'='*75}\n")
+
+
 class TerrainCurriculumCallback(BaseCallback):
     """Push global training progress into envs so terrain difficulty increases over time."""
 
@@ -217,6 +309,13 @@ class TensorBoardMetricsCallback(BaseCallback):
                 spawn_valid_flags = []
                 spawn_contacts = []
                 spawn_penetrations = []
+                support_rewards = []
+                support_polygon_areas = []
+                support_incircle_radii = []
+                support_safe_radii = []
+                support_edge_margins = []
+                support_stability_streaks = []
+                support_inside_safe_flags = []
                 
                 for info in self.locals['infos']:
                     if 'base_height' in info:
@@ -239,6 +338,20 @@ class TensorBoardMetricsCallback(BaseCallback):
                         rb = info['reward_breakdown']
                         if 'curriculum_active' in rb:
                             success_flags.append(rb['curriculum_active'])
+                        if 'R_stability' in rb:
+                            support_rewards.append(rb['R_stability'])
+                        if 'support_polygon_area' in rb:
+                            support_polygon_areas.append(rb['support_polygon_area'])
+                        if 'support_incircle_radius' in rb:
+                            support_incircle_radii.append(rb['support_incircle_radius'])
+                        if 'support_safe_radius' in rb:
+                            support_safe_radii.append(rb['support_safe_radius'])
+                        if 'support_edge_margin' in rb:
+                            support_edge_margins.append(rb['support_edge_margin'])
+                        if 'support_stability_streak' in rb:
+                            support_stability_streaks.append(rb['support_stability_streak'])
+                        if 'support_com_inside_safe_circle' in rb:
+                            support_inside_safe_flags.append(rb['support_com_inside_safe_circle'])
                 
                 # Log environment-specific metrics
                 if len(heights) > 0:
@@ -269,6 +382,30 @@ class TensorBoardMetricsCallback(BaseCallback):
 
                 if len(spawn_penetrations) > 0:
                     self.logger.record("spawn/min_contact_dist", np.min(spawn_penetrations))
+
+                # Support polygon / stability metrics
+                if len(support_rewards) > 0:
+                    self.logger.record("stability/reward", np.mean(support_rewards))
+
+                if len(support_polygon_areas) > 0:
+                    self.logger.record("stability/polygon_area_mean", np.mean(support_polygon_areas))
+
+                if len(support_incircle_radii) > 0:
+                    self.logger.record("stability/incircle_radius_mean", np.mean(support_incircle_radii))
+
+                if len(support_safe_radii) > 0:
+                    self.logger.record("stability/safe_radius_mean", np.mean(support_safe_radii))
+
+                if len(support_edge_margins) > 0:
+                    self.logger.record("stability/edge_margin_mean", np.mean(support_edge_margins))
+                    self.logger.record("stability/edge_margin_min", np.min(support_edge_margins))
+
+                if len(support_stability_streaks) > 0:
+                    self.logger.record("stability/streak_mean", np.mean(support_stability_streaks))
+                    self.logger.record("stability/streak_max", np.max(support_stability_streaks))
+
+                if len(support_inside_safe_flags) > 0:
+                    self.logger.record("stability/inside_safe_rate", np.mean(support_inside_safe_flags))
             
             # Update last log time
             self.last_log_time = current_time

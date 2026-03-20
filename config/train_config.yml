@@ -95,9 +95,19 @@ reward:
     w9: 0.08    # R_jitter_contact: penalize foot contact state switching (too high can induce stiffness)
     w10: 0.0    # R_touchdown_contact: currently disabled in total reward
     w11: 0.55   # R_4fc_duration_exp: bonus for sustained 4-feet contact
+    w12: 0.45   # R_stability: support polygon + inscribed-circle CoM safety reward
   contact_duration:
     foot_alpha: 0.06      # R_fc_duration_exp = mean(1 - exp(-foot_alpha * streak_i))
     all_feet_alpha: 0.12  # R_4fc_duration_exp = 1 - exp(-all_feet_alpha * streak_4fc)
+  stabilizer:
+    com_projection_radius: 0.05   # Effective projected CoM safety radius (meters)
+    target_polygon_area: 0.03     # Target support area to saturate area term
+    target_incircle_radius: 0.09  # Target inscribed-circle radius to saturate circle term
+    streak_alpha: 0.03            # Time persistence gain for sustained stability
+    position_weight: 0.45         # Margin to safe circle edge
+    incircle_weight: 0.25         # Encourage larger inscribed circle
+    area_weight: 0.20             # Encourage larger support polygon (e.g. near rectangular stance)
+    time_weight: 0.10             # Encourage longer stable stance durations
   curriculum:
     enabled: true
     orientation_threshold: 0.4
@@ -222,7 +232,8 @@ training:
   random_orientation: true
   random_joint_positions: true
   total_episodes: 300
-  total_timesteps_ppo: 3_686_400
+  # total_timesteps_ppo: 3_686_400
+  total_timesteps_ppo: 300_000
   total_timesteps_trpo: 3_686_400
   total_timesteps_sac: 3_686_400
   save_freq: 100_000
