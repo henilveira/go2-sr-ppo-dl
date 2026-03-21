@@ -134,7 +134,7 @@ ppo:
     activation_fn: "relu"
   verbose: 1
   tensorboard_log: "./logs/"
-  
+
 sac:
   learning_rate: 0.0004264682607738638
   buffer_size: 1000000
@@ -221,8 +221,7 @@ training:
   random_orientation: true
   random_joint_positions: true
   total_episodes: 300
-  # total_timesteps_ppo: 3_686_400
-  total_timesteps_ppo: 300_000
+  total_timesteps_ppo: 3_686_400
   total_timesteps_trpo: 3_686_400
   total_timesteps_sac: 3_686_400
   save_freq: 100_000
