@@ -118,7 +118,7 @@ reward:
     enabled: true
     orientation_threshold: 0.4
 
-paper_ppo:
+ppo:
   batch_size: 32
   learning_rate: 3.3e-4
   gamma: 0.97
@@ -134,24 +134,7 @@ paper_ppo:
     activation_fn: "relu"
   verbose: 1
   tensorboard_log: "./logs/"
-
-improved_ppo:
-  batch_size: 256
-  learning_rate: 0.00021332329186045702
-  gamma: 0.9727412553508487
-  ent_coef: 0.005237780203952844
-  gae_lambda: 0.9138068587115054
-  vf_coef: 0.15650014625945877
-  max_grad_norm: 0.8549178816984591
-  n_steps: 2048
-  n_epochs: 20
-  clip_range: 0.2789326463680452
-  policy_kwargs:
-    net_arch: [256, 256, 128]
-    activation_fn: "relu"
-  verbose: 1
-  tensorboard_log: "./logs/"
-
+  
 sac:
   learning_rate: 0.0004264682607738638
   buffer_size: 1000000
@@ -227,7 +210,7 @@ cma_es:
 
 
 training:
-  ppo_profile: "improved_ppo"
+  ppo_profile: "ppo"
   num_parallel_envs: 12
   max_episode_steps: 512
   max_spawn_retries: 6
