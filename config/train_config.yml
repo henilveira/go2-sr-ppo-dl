@@ -96,6 +96,7 @@ reward:
     w10: 0.0    # R_touchdown_contact: currently disabled in total reward
     w11: 0.55   # R_4fc_duration_exp: bonus for sustained 4-feet contact
     w12: 0.45   # R_stability: support polygon + inscribed-circle CoM safety reward
+    w13: 0.15   # R_ellipse_posture: posture regularization to rectangular stance
   contact_duration:
     foot_alpha: 0.06      # R_fc_duration_exp = mean(1 - exp(-foot_alpha * streak_i))
     all_feet_alpha: 0.12  # R_4fc_duration_exp = 1 - exp(-all_feet_alpha * streak_4fc)
@@ -108,6 +109,11 @@ reward:
     incircle_weight: 0.25         # Encourage larger inscribed circle
     area_weight: 0.20             # Encourage larger support polygon (e.g. near rectangular stance)
     time_weight: 0.10             # Encourage longer stable stance durations
+  ellipse_posture:
+    enabled: true                 # Enable ellipse posture regularization
+    enabled_only_with_4_contacts: true  # Only compute reward when 4 paws in contact
+    b_target: 0.11                # Target minor semi-axis (lateral width, meters)
+    ke: 8.0                       # Exponential penalty gain for ellipse error
   curriculum:
     enabled: true
     orientation_threshold: 0.4

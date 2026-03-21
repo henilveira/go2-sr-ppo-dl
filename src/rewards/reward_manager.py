@@ -116,6 +116,12 @@ class RewardManager:
         stability_reward, stability_metrics = self._compute_support_stability_reward(info)
         rewards['R_stability'] = stability_reward
         rewards.update(stability_metrics)
+
+        # Ellipse posture reward: regularizes feet positions to stay rectangular.
+        # Uses foci at midpoints of front/back paws and penalizes ellipse error.
+        ellipse_reward, ellipse_metrics = self._compute_ellipse_posture_reward(info)
+        rewards['R_ellipse_posture'] = ellipse_reward
+        rewards.update(ellipse_metrics)
         
         # ========== CURRICULUM REWARDS ==========
         # Activate when robot is getting upright (R_g_normalized > threshold)
@@ -164,6 +170,7 @@ class RewardManager:
             - self.weights['w9'] * rewards['R_jitter_contact'] +
             + self.weights.get('w11', 0.0) * rewards['R_4fc'] +
             + self.weights.get('w12', 0.0) * rewards['R_stability'] +
+            + self.weights.get('w13', 0.0) * rewards['R_ellipse_posture'] +
             # - self.weights['w10'] * rewards['R_touchdown_contact'] +
             0.05 * rewards['R_alive'] +  # Small alive bonus
             0.1 * rewards['R_progress']  # Small progress shaping
@@ -437,6 +444,93 @@ class RewardManager:
         t = np.clip(t, 0.0, 1.0)
         projection = a + t * ab
         return float(np.linalg.norm(p - projection))
+
+    def _compute_ellipse_posture_reward(self, info):
+        """Compute ellipse posture reward to regularize foot positions to rectangular stance.
+        
+        Uses ellipse with foci at midpoints of front (FL+FR) and rear (RL+RR) paws.
+        Rewards when all 4 feet lie approximately on the ellipse circumference.
+        """
+        default_metrics = {
+            'ellipse_posture_reward': 0.0,
+            'ellipse_error_mean': 1.0,
+            'ellipse_error_max': 1.0,
+            'ellipse_f1_f2_dist': 0.0,
+            'ellipse_a': 0.0,
+            'ellipse_b': 0.0,
+        }
+
+        feet_contacts = np.asarray(info.get('feet_contacts', []), dtype=bool)
+        feet_positions_xy = np.asarray(info.get('feet_positions_xy', []), dtype=np.float64)
+
+        ellipse_cfg = self.config.get('reward', {}).get('ellipse_posture', {})
+        enabled = bool(ellipse_cfg.get('enabled', True))
+        only_4_contacts = bool(ellipse_cfg.get('enabled_only_with_4_contacts', True))
+        
+        if not enabled:
+            return 0.0, default_metrics
+
+        # Check if exactly 4 feet are in contact
+        if only_4_contacts and np.sum(feet_contacts) != 4:
+            return 0.0, default_metrics
+
+        if feet_positions_xy.size < 8:  # Need 4 points (2D each)
+            return 0.0, default_metrics
+
+        # Extract positions: order is [FR, FL, RR, RL]
+        fr = feet_positions_xy[0]  # Front Right
+        fl = feet_positions_xy[1]  # Front Left
+        rr = feet_positions_xy[2]  # Rear Right
+        rl = feet_positions_xy[3]  # Rear Left
+
+        # Validate all positions are finite
+        if not (np.all(np.isfinite(fr)) and np.all(np.isfinite(fl)) and
+                np.all(np.isfinite(rr)) and np.all(np.isfinite(rl))):
+            return 0.0, default_metrics
+
+        # Compute foci at midpoints
+        f1 = (fl + fr) / 2.0  # Front focus
+        f2 = (rl + rr) / 2.0  # Rear focus
+
+        # Distance between foci
+        c = np.linalg.norm(f2 - f1)
+        if c < 1e-6:
+            return 0.0, default_metrics
+
+        # Target ellipse parameters (from config)
+        b_target = float(ellipse_cfg.get('b_target', 0.11))
+        a_target = float(np.sqrt(c**2 + b_target**2))
+
+        # Compute sum-of-distances to foci for each paw (ellipse definition)
+        feet = [fr, fl, rr, rl]
+        sum_distances = []
+        for foot in feet:
+            d1 = np.linalg.norm(foot - f1)
+            d2 = np.linalg.norm(foot - f2)
+            sum_distances.append(d1 + d2)
+
+        # Normalized ellipse parameter s_i = sum_distances_i / (2*a_target)
+        # Ideal: s_i = 1.0 (all feet on elipse)
+        s_values = np.array(sum_distances) / (2.0 * a_target)
+        ellipse_errors = np.abs(s_values - 1.0)
+
+        ke = float(ellipse_cfg.get('ke', 8.0))
+        error_mean = float(np.mean(ellipse_errors))
+        error_max = float(np.max(ellipse_errors))
+
+        # Reward: exp(-k_e * mean(error))
+        reward = float(np.exp(-ke * error_mean))
+
+        metrics = {
+            'ellipse_posture_reward': reward,
+            'ellipse_error_mean': error_mean,
+            'ellipse_error_max': error_max,
+            'ellipse_f1_f2_dist': float(c),
+            'ellipse_a': float(a_target),
+            'ellipse_b': float(b_target),
+        }
+
+        return reward, metrics
     
     def _get_body_z_in_world(self):
         """Get the z-component of body's up vector in world frame"""

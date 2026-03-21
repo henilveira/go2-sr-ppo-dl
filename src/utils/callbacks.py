@@ -99,7 +99,9 @@ class StabilityMetricsCallback(BaseCallback):
             'safe_radii': [],
             'edge_margins': [],
             'streaks': [],
-            'inside_safe': []
+            'inside_safe': [],
+            'ellipse_rewards': [],
+            'ellipse_errors': [],
         }
     
     def _on_step(self) -> bool:
@@ -128,6 +130,10 @@ class StabilityMetricsCallback(BaseCallback):
                         self.stability_metrics['streaks'].append(float(rb['support_stability_streak']))
                     if 'support_com_inside_safe_circle' in rb:
                         self.stability_metrics['inside_safe'].append(float(rb['support_com_inside_safe_circle']))
+                    if 'ellipse_posture_reward' in rb:
+                        self.stability_metrics['ellipse_rewards'].append(float(rb['ellipse_posture_reward']))
+                    if 'ellipse_error_mean' in rb:
+                        self.stability_metrics['ellipse_errors'].append(float(rb['ellipse_error_mean']))
         
         # Print periodically
         if self.rollout_count % self.log_freq == 0:
@@ -170,6 +176,11 @@ class StabilityMetricsCallback(BaseCallback):
             streak_mean = np.mean(metrics['streaks'])
             streak_max = np.max(metrics['streaks'])
             print(f"  Stability streak:   mean={streak_mean:7.1f} steps, max={streak_max:7.1f} steps")
+        
+        if metrics['ellipse_rewards']:
+            ellipse_mean = np.mean(metrics['ellipse_rewards'])
+            error_mean = np.mean(metrics['ellipse_errors'])
+            print(f"  Ellipse posture:    reward={ellipse_mean:7.4f}, error={error_mean:7.4f}")
         
         print(f"{'='*75}\n")
 
