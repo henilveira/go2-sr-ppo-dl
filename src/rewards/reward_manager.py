@@ -449,12 +449,13 @@ class RewardManager:
         """Compute ellipse posture reward to regularize foot positions to rectangular stance.
         
         Uses ellipse with foci at midpoints of front (FL+FR) and rear (RL+RR) paws.
-        Rewards when all 4 feet lie approximately on the ellipse circumference.
+        Rewards contact feet that lie approximately on the ellipse circumference.
         """
         default_metrics = {
             'ellipse_posture_reward': 0.0,
             'ellipse_error_mean': 1.0,
             'ellipse_error_max': 1.0,
+            'ellipse_contacts_used': 0.0,
             'ellipse_f1_f2_dist': 0.0,
             'ellipse_a': 0.0,
             'ellipse_b': 0.0,
@@ -466,12 +467,20 @@ class RewardManager:
         ellipse_cfg = self.config.get('reward', {}).get('ellipse_posture', {})
         enabled = bool(ellipse_cfg.get('enabled', True))
         only_4_contacts = bool(ellipse_cfg.get('enabled_only_with_4_contacts', True))
+        min_contacts = int(ellipse_cfg.get('min_contacts', 1))
         
         if not enabled:
             return 0.0, default_metrics
 
-        # Check if exactly 4 feet are in contact
-        if only_4_contacts and np.sum(feet_contacts) != 4:
+        contacts_count = int(np.sum(feet_contacts))
+
+        # Legacy gate for strict 4-feet stance only.
+        if only_4_contacts and contacts_count != 4:
+            return 0.0, default_metrics
+
+        # New behavior: compute reward whenever at least one foot is in contact
+        # (or a configurable minimum number of contact feet).
+        if contacts_count < max(min_contacts, 1):
             return 0.0, default_metrics
 
         if feet_positions_xy.size < 8:  # Need 4 points (2D each)
@@ -514,17 +523,24 @@ class RewardManager:
         s_values = np.array(sum_distances) / (2.0 * a_target)
         ellipse_errors = np.abs(s_values - 1.0)
 
-        ke = float(ellipse_cfg.get('ke', 8.0))
-        error_mean = float(np.mean(ellipse_errors))
-        error_max = float(np.max(ellipse_errors))
+        # Reward is evaluated only on contact feet (always positive proximity reward).
+        contact_indices = np.where(feet_contacts[:4])[0]
+        if contact_indices.size == 0:
+            return 0.0, default_metrics
 
-        # Reward: exp(-k_e * mean(error))
+        contact_errors = ellipse_errors[contact_indices]
+        ke = float(ellipse_cfg.get('ke', 8.0))
+        error_mean = float(np.mean(contact_errors))
+        error_max = float(np.max(contact_errors))
+
+        # Positive proximity reward: higher when closer to ellipse.
         reward = float(np.exp(-ke * error_mean))
 
         metrics = {
             'ellipse_posture_reward': reward,
             'ellipse_error_mean': error_mean,
             'ellipse_error_max': error_max,
+            'ellipse_contacts_used': float(contact_indices.size),
             'ellipse_f1_f2_dist': float(c),
             'ellipse_a': float(a_target),
             'ellipse_b': float(b_target),
