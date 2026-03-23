@@ -534,7 +534,9 @@ class RewardManager:
         error_max = float(np.max(contact_errors))
 
         # Positive proximity reward: higher when closer to ellipse.
-        reward = float(np.exp(-ke * error_mean))
+        # Scale by contact fraction so 1-2 contact stances cannot saturate this term.
+        contact_fraction = float(contact_indices.size) / 4.0
+        reward = float(np.exp(-ke * error_mean) * contact_fraction)
 
         metrics = {
             'ellipse_posture_reward': reward,

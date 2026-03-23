@@ -94,12 +94,12 @@ reward:
     w8: 0.05   # R_vb: Base linear velocity 
     w9: 0.08    # R_jitter_contact: penalize foot contact state switching (too high can induce stiffness)
     w10: 0.0    # R_touchdown_contact: currently disabled in total reward
-    w11: 0.55   # R_4fc_duration_exp: bonus for sustained 4-feet contact
+    w11: 1.60   # R_4fc_duration_exp: strong bonus for sustained 4-feet contact
     w12: 0.45   # R_stability: support polygon + inscribed-circle CoM safety reward
-    w13: 1.00   # R_ellipse_posture: strong positive reward for feet near the target ellipse
+    w13: 0.35   # R_ellipse_posture: auxiliary posture shaping (kept below 4-feet support)
   contact_duration:
     foot_alpha: 0.06      # R_fc_duration_exp = mean(1 - exp(-foot_alpha * streak_i))
-    all_feet_alpha: 0.12  # R_4fc_duration_exp = 1 - exp(-all_feet_alpha * streak_4fc)
+    all_feet_alpha: 0.25  # R_4fc_duration_exp = 1 - exp(-all_feet_alpha * streak_4fc)
   stabilizer:
     com_projection_radius: 0.05   # Effective projected CoM safety radius (meters)
     target_polygon_area: 0.03     # Target support area to saturate area term
@@ -112,7 +112,7 @@ reward:
   ellipse_posture:
     enabled: true                 # Enable ellipse posture regularization
     enabled_only_with_4_contacts: false # Compute whenever there is contact (not only 4 paws)
-    min_contacts: 1               # Minimum number of contact feet required
+    min_contacts: 3               # Require at least tripod support for ellipse reward
     b_target: 0.11                # Target minor semi-axis (lateral width, meters)
     ke: 12.0                      # Higher gain: much larger reward when close to ellipse
   curriculum:
