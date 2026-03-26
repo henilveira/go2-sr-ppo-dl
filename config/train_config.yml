@@ -75,6 +75,16 @@ controller:
   kd: 6.5 # Derivative gain - LOWER to allow faster motion
   # max_torque removed - now uses MuJoCo model limits per actuator
   # Hip/Thigh: 23.7 Nm, Knee(calf): 45.43 Nm
+  post_recovery_torque:
+    enabled: true
+    success_uprightness: 0.90     # Consider SR complete when base is mostly upright
+    recovery_scale: 1.0           # Full torque while self-righting
+    transition_scale: 0.55        # Reduced torque once upright but still settling
+    hold_scale: 0.25              # Low-torque holding when upright and stable
+    low_base_vel_threshold: 0.22  # m/s
+    low_joint_vel_threshold: 1.2  # rad/s
+    position_deadband_rad: 0.03   # Avoid micro-corrections in stable pose
+    velocity_deadband: 0.60       # rad/s
 
 # ==================== REWARD FUNCTION ====================
 # Paper Table II & III, Eq. (9)
@@ -97,6 +107,8 @@ reward:
     w11: 1.60   # R_4fc_duration_exp: strong bonus for sustained 4-feet contact
     w12: 0.45   # R_stability: support polygon + inscribed-circle CoM safety reward
     w13: 0.35   # R_ellipse_posture: auxiliary posture shaping (kept below 4-feet support)
+    w14: 0.20   # R_torque_efficiency: encourage lower average torque usage
+    w15: 0.15   # R_post_recovery_relax: reward low torque after successful SR
   contact_duration:
     foot_alpha: 0.06      # R_fc_duration_exp = mean(1 - exp(-foot_alpha * streak_i))
     all_feet_alpha: 0.25  # R_4fc_duration_exp = 1 - exp(-all_feet_alpha * streak_4fc)
@@ -115,6 +127,9 @@ reward:
     min_contacts: 3               # Require at least tripod support for ellipse reward
     b_target: 0.07                # Target minor semi-axis (lateral width, meters); lower narrows leg spacing
     ke: 12.0                      # Higher gain: much larger reward when close to ellipse
+  torque:
+    efficiency_alpha: 3.0         # Higher -> stronger penalty for average torque utilization
+    hold_relax_gain: 1.0          # Gain for post-recovery low-torque holding reward
   curriculum:
     enabled: true
     orientation_threshold: 0.4

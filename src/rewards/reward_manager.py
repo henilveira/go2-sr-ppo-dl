@@ -92,6 +92,10 @@ class RewardManager:
         # R_vb: Base Linear Velocity Cost - Paper Table II
         rewards['R_vb'] = self._compute_base_velocity_cost(info['base_linear_velocity'])
 
+        # Torque-efficiency terms encourage precise motion with less actuator effort.
+        rewards['R_torque_efficiency'] = self._compute_torque_efficiency_reward(info)
+        rewards['R_post_recovery_relax'] = self._compute_post_recovery_relax_reward(info)
+
         # Contact transition metrics:
         # - switches: any ON/OFF change (jitter proxy)
         # - touchdowns: only OFF->ON changes (number of contact events)
@@ -171,6 +175,8 @@ class RewardManager:
             + self.weights.get('w11', 0.0) * rewards['R_4fc'] +
             + self.weights.get('w12', 0.0) * rewards['R_stability'] +
             + self.weights.get('w13', 0.0) * rewards['R_ellipse_posture'] +
+            + self.weights.get('w14', 0.0) * rewards['R_torque_efficiency'] +
+            + self.weights.get('w15', 0.0) * rewards['R_post_recovery_relax'] +
             # - self.weights['w10'] * rewards['R_touchdown_contact'] +
             0.05 * rewards['R_alive'] +  # Small alive bonus
             0.1 * rewards['R_progress']  # Small progress shaping
@@ -708,3 +714,21 @@ class RewardManager:
         reward = np.exp(-2.0 * velocity_magnitude ** 2)
         
         return reward
+
+    def _compute_torque_efficiency_reward(self, info):
+        """Reward lower torque usage while preserving positive shaping [0,1]."""
+        utilization = float(np.clip(info.get('mean_torque_utilization', 0.0), 0.0, 1.5))
+        torque_cfg = self.config.get('reward', {}).get('torque', {})
+        alpha = float(torque_cfg.get('efficiency_alpha', 3.0))
+        return float(np.exp(-alpha * utilization))
+
+    def _compute_post_recovery_relax_reward(self, info):
+        """Extra reward for reducing torque when upright and stable."""
+        stable = bool(info.get('post_recovery_stable', 0.0) > 0.5)
+        if not stable:
+            return 0.0
+
+        utilization = float(np.clip(info.get('mean_torque_utilization', 0.0), 0.0, 1.0))
+        torque_cfg = self.config.get('reward', {}).get('torque', {})
+        hold_gain = float(torque_cfg.get('hold_relax_gain', 1.0))
+        return float(np.clip(1.0 - hold_gain * utilization, 0.0, 1.0))

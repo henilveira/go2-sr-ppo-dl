@@ -88,6 +88,12 @@ class Go2Env(gym.Env):
         # Action smoothing factor (0 = no smoothing, 1 = full smoothing)
         # Higher value = smoother but slower response
         self.action_smoothing = self.config.get('action', {}).get('smoothing', 0.35)
+
+        # Runtime torque telemetry (updated each control step)
+        self.last_applied_torque = np.zeros(12, dtype=np.float64)
+        self.last_torque_utilization_mean = 0.0
+        self.last_torque_scale = 1.0
+        self.last_post_recovery_stable = 0.0
         
         # For rendering
         self.viewer = None
@@ -182,6 +188,11 @@ class Go2Env(gym.Env):
         print(f"{'='*50}\n")
         
         print(f"Found {len(self.joint_ids)} joints, {len(self.actuator_ids)} actuators")
+
+        self.actuator_max_torques = np.zeros(len(self.actuator_ids), dtype=np.float64)
+        for i, actuator_id in enumerate(self.actuator_ids):
+            ctrl_range = self.model.actuator_ctrlrange[actuator_id]
+            self.actuator_max_torques[i] = max(abs(float(ctrl_range[0])), abs(float(ctrl_range[1])), 1e-6)
 
         # Cache foot geoms and world ground geoms used by contact checks.
         self.foot_geom_names = ['FR', 'FL', 'RR', 'RL']
@@ -744,6 +755,9 @@ class Go2Env(gym.Env):
         # PD gains from config
         kp = self.config.get('controller', {}).get('kp', 40.0)
         kd = self.config.get('controller', {}).get('kd', 5.0)
+        torque_scale, position_deadband, velocity_deadband, post_recovery_stable = self._compute_torque_management_state()
+
+        utilization = []
         
         for i in range(12):
             # Get correct addresses from mapping
@@ -762,13 +776,60 @@ class Go2Env(gym.Env):
             # Get actuator-specific torque limits from MuJoCo model
             # Hip/Thigh: ±23.7 Nm, Knee(calf): ±45.43 Nm
             ctrl_range = self.model.actuator_ctrlrange[actuator_id]
-            max_torque = ctrl_range[1]  # Upper limit (symmetric)
+            max_torque = max(abs(float(ctrl_range[0])), abs(float(ctrl_range[1]))) * torque_scale
+
+            # When recovered and nearly stationary, avoid fighting tiny tracking errors.
+            if abs(error) < position_deadband and abs(current_vel) < velocity_deadband:
+                torque = 0.0
             
             # Clip torque to actuator limits
             torque = np.clip(torque, -max_torque, max_torque)
             
             # Apply torque to CORRECT actuator
             self.data.ctrl[actuator_id] = torque
+
+            self.last_applied_torque[i] = torque
+            base_limit = self.actuator_max_torques[i] if i < len(self.actuator_max_torques) else max_torque
+            utilization.append(abs(float(torque)) / max(base_limit, 1e-6))
+
+        self.last_torque_utilization_mean = float(np.mean(utilization)) if utilization else 0.0
+        self.last_torque_scale = float(torque_scale)
+        self.last_post_recovery_stable = float(post_recovery_stable)
+
+    def _compute_torque_management_state(self):
+        """Return adaptive torque parameters for recovery and post-recovery phases."""
+        cfg = self.config.get('controller', {}).get('post_recovery_torque', {})
+        if not cfg.get('enabled', True):
+            return 1.0, 0.0, 0.0, False
+
+        uprightness = self._get_uprightness()
+        target_uprightness = float(cfg.get('success_uprightness', 0.90))
+
+        base_speed = float(np.linalg.norm(self.data.qvel[0:3]))
+        joint_velocities = np.array([self.data.qvel[addr] for addr in self.joint_qvel_addr], dtype=np.float64)
+        mean_joint_speed = float(np.mean(np.abs(joint_velocities)))
+
+        low_base_vel = float(cfg.get('low_base_vel_threshold', 0.22))
+        low_joint_vel = float(cfg.get('low_joint_vel_threshold', 1.2))
+
+        recovered = uprightness >= target_uprightness
+        stable = recovered and (base_speed <= low_base_vel) and (mean_joint_speed <= low_joint_vel)
+
+        if stable:
+            torque_scale = float(cfg.get('hold_scale', 0.25))
+            position_deadband = float(cfg.get('position_deadband_rad', 0.03))
+            velocity_deadband = float(cfg.get('velocity_deadband', 0.60))
+        elif recovered:
+            torque_scale = float(cfg.get('transition_scale', 0.55))
+            position_deadband = 0.0
+            velocity_deadband = 0.0
+        else:
+            torque_scale = float(cfg.get('recovery_scale', 1.0))
+            position_deadband = 0.0
+            velocity_deadband = 0.0
+
+        torque_scale = float(np.clip(torque_scale, 0.05, 1.0))
+        return torque_scale, position_deadband, velocity_deadband, stable
             
     def _compute_reward(self, obs, action):
         """
@@ -837,6 +898,11 @@ class Go2Env(gym.Env):
             'spawn_is_valid': float(self.spawn_is_valid),
             'spawn_contacts': self.spawn_ncon,
             'spawn_deepest_penetration': self.spawn_deepest_penetration,
+            'mean_abs_torque': float(np.mean(np.abs(self.last_applied_torque))),
+            'max_abs_torque': float(np.max(np.abs(self.last_applied_torque))),
+            'mean_torque_utilization': float(self.last_torque_utilization_mean),
+            'torque_relax_scale': float(self.last_torque_scale),
+            'post_recovery_stable': float(self.last_post_recovery_stable),
             'step': self.step_count
         }
 
