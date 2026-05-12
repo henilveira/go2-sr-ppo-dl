@@ -200,3 +200,24 @@ paths:
   checkpoints: "./checkpoints/"
   logs: "./logs/"
   videos: "./videos/"
+
+# ==================== Q-DECOMPOSITION SAC ====================
+# Implements Russell & Zimdars (2003) Q-decomposition for continuous actions.
+# Each reward component has its own pair of Q-networks (double-Q trick).
+# The shared actor maximises sum of all sub-Q-values (arbitrator).
+qdecomp:
+  learning_rate: 3.0e-4
+  buffer_size: 1_000_000
+  batch_size: 256
+  tau: 0.005            # soft target update rate
+  gamma: 0.99           # discount factor
+  learning_starts: 5000 # random exploration steps before learning
+  train_freq: 1         # update every N environment steps
+  gradient_steps: 1     # gradient steps per environment step
+  target_entropy: "auto" # auto = -action_dim = -12
+  hidden_sizes: [256, 256]
+  use_state_masks: true  # each subagent sees only its relevant obs features
+  total_timesteps: 3_000_000
+  eval_freq: 25_000
+  n_eval_episodes: 5
+  save_freq: 100_000
