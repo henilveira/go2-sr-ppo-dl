@@ -17,17 +17,23 @@ REWARD_KEYS = [
 ]
 
 # Observation indices each subagent cares about (state partitioning).
-# Obs layout: [0:12] joint_pos, [12:24] joint_vel, [24:27] orientation, [27:30] ang_vel
+# Obs layout (36D):
+#   [0:12]  joint_pos
+#   [12:24] joint_vel
+#   [24:27] base_orientation (gravity in body frame)
+#   [27:30] base_angular_vel
+#   [30:33] com_pos_base
+#   [33:36] com_vel_base
 STATE_MASKS: dict[str, list[int]] = {
-    'R_h':       [24, 25, 26],
+    'R_h':       [24, 25, 26] + list(range(30, 33)),   # orientation + com_pos (height proxy)
     'R_g':       [24, 25, 26],
-    'R_h_cl':    [24, 25, 26],
+    'R_h_cl':    [24, 25, 26] + list(range(30, 33)),
     'R_jp':      list(range(0, 12)),
     'R_fc':      list(range(0, 12)) + [24, 25, 26],
-    'R_ad':      list(range(0, 30)),
+    'R_ad':      list(range(0, 36)),
     'R_v':       list(range(12, 24)),
-    'R_vb':      [27, 28, 29],
-    'R_alive':   list(range(0, 30)),
+    'R_vb':      [27, 28, 29] + list(range(33, 36)),   # ang_vel + com_vel
+    'R_alive':   list(range(0, 36)),
     'R_progress':[24, 25, 26],
 }
 
@@ -120,7 +126,7 @@ class QDecompCritic(nn.Module):
         action_dim: int,
         hidden_sizes: list[int],
         use_state_masks: bool = True,
-        full_obs_dim: int = 30,
+        full_obs_dim: int = 36,
     ):
         super().__init__()
         self.reward_keys = reward_keys

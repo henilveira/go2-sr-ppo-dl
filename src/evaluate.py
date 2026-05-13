@@ -250,7 +250,9 @@ def load_trained_model(training_method, model_path, config):
         checkpoint = torch.load(model_path, map_location="cpu")
         qd_cfg = config.get("qdecomp", {})
         hidden = qd_cfg.get("hidden_sizes", [256, 256])
-        actor = QDecompActor(obs_dim=30, action_dim=12, hidden_sizes=hidden)
+        # Infer obs_dim from saved weights to stay compatible with any env version
+        obs_dim = checkpoint["actor"]["net.0.weight"].shape[1]
+        actor = QDecompActor(obs_dim=obs_dim, action_dim=12, hidden_sizes=hidden)
         actor.load_state_dict(checkpoint["actor"])
         return QDecompModelWrapper(actor)
 
