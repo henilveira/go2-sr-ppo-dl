@@ -19,6 +19,7 @@ if str(project_root) not in sys.path:
 
 from stable_baselines3 import PPO, SAC
 from environment.go2_env import Go2Env
+from src.models.qdecomp.networks import Actor as QDecompActor
 
 
 def _load_trpo_class():
@@ -40,6 +41,9 @@ METHOD_ALIASES = {
     "cma_es": "cma-es",
     "cmaes": "cma-es",
     "cma": "cma",
+    "qdecomp": "qdecomp",
+    "q-decomp": "qdecomp",
+    "qdecompsac": "qdecomp",
 }
 
 
@@ -97,6 +101,14 @@ METHOD_SPECS = {
             ("final", "final_model.pt"),
         ],
     },
+    "qdecomp": {
+        "logs_subdirs": ["qdecomp"],
+        "type": "qdecomp",
+        "candidates": [
+            ("best", "best_model.pt"),
+            ("final", "final_model.pt"),
+        ],
+    },
 }
 
 
@@ -132,6 +144,23 @@ class CMAModelWrapper:
         with torch.no_grad():
             action = self.policy(obs).cpu().numpy()
         return action, None
+
+
+class QDecompModelWrapper:
+    """Wraps a QDecomp actor to emulate the Stable-Baselines `predict` interface."""
+
+    def __init__(self, actor: QDecompActor):
+        self.actor = actor
+        self.actor.eval()
+
+    def predict(self, obs, deterministic=True):
+        obs_t = torch.as_tensor(obs, dtype=torch.float32).unsqueeze(0)
+        with torch.no_grad():
+            if deterministic:
+                action = self.actor.deterministic(obs_t)
+            else:
+                action, _ = self.actor.sample(obs_t)
+        return action.squeeze(0).cpu().numpy(), None
 
 
 def resolve_training_method(training_method):
@@ -216,6 +245,14 @@ def load_trained_model(training_method, model_path, config):
                 "TRPO support requires sb3-contrib. Install it with: pip install sb3-contrib"
             )
         return algorithm_class.load(model_path)
+
+    if method_spec["type"] == "qdecomp":
+        checkpoint = torch.load(model_path, map_location="cpu")
+        qd_cfg = config.get("qdecomp", {})
+        hidden = qd_cfg.get("hidden_sizes", [256, 256])
+        actor = QDecompActor(obs_dim=30, action_dim=12, hidden_sizes=hidden)
+        actor.load_state_dict(checkpoint["actor"])
+        return QDecompModelWrapper(actor)
 
     cma_config = config.get("cma_es", {})
     hidden_sizes = tuple(cma_config.get("hidden_sizes", [128, 128]))
@@ -619,7 +656,7 @@ if __name__ == "__main__":
         "--model",
         type=str,
         default="ppo",
-        help="Model type: ppo | trpo | sac | cma-es | cma",
+        help="Model type: ppo | trpo | sac | cma-es | cma | qdecomp",
     )
     parser.add_argument(
         "--terrain",
