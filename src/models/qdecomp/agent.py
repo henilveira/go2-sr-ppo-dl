@@ -46,6 +46,23 @@ class QDecompSAC:
         self.train_freq      = cfg.get('train_freq', 1)
         self.gradient_steps  = cfg.get('gradient_steps', 1)
 
+        # Weighted contributions so that sum(reward_vector) ≈ total_reward.
+        # R_jitter_contact is a penalty → stored negative.
+        w = config['reward']['weights']
+        self._reward_scale = {
+            'R_h':                 w.get('w1',  0.30) * +1,
+            'R_g':                 w.get('w2',  0.30) * +1,
+            'R_jp':                w.get('w4',  0.60) * +1,
+            'R_fc':                w.get('w5',  0.10) * +1,
+            'R_ad':                w.get('w6',  0.05) * +1,
+            'R_vb':                w.get('w8',  0.05) * +1,
+            'R_4fc':               w.get('w11', 1.60) * +1,
+            'R_stability':         w.get('w12', 0.45) * +1,
+            'R_ellipse_posture':   w.get('w13', 0.35) * +1,
+            'R_torque_efficiency': w.get('w14', 0.20) * +1,
+            'R_jitter_contact':    w.get('w9',  0.08) * -1,
+        }
+
         # Networks
         self.actor = Actor(obs_dim, action_dim, hidden).to(device)
         self.critics = QDecompCritic(
@@ -101,8 +118,9 @@ class QDecompSAC:
         next_obs: np.ndarray,
         done: bool,
     ):
+        # Store weighted contributions so Σ reward_vector ≈ total_reward.
         reward_vector = np.array(
-            [reward_breakdown.get(k, 0.0) for k in self.reward_keys],
+            [self._reward_scale[k] * reward_breakdown.get(k, 0.0) for k in self.reward_keys],
             dtype=np.float32,
         )
         self.buffer.store(obs, action, reward_vector, next_obs, done)

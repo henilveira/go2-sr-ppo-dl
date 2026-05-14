@@ -10,10 +10,24 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Normal
 
-# Reward component names (must match keys in reward_manager.compute() breakdown)
+# Reward component names (must match keys in reward_manager.compute() breakdown).
+#
+# Removed (redundant/useless):
+#   R_alive    — constant 0.1, Q-gradient w.r.t. action is always zero
+#   R_v        — weight 0.005, negligible signal
+#   R_progress — duplicate of R_g (both measure uprightness via orientation)
+#   R_h_cl     — identical computation to R_h, just curriculum-gated
+#
+# Added (high-weight terms missing from original list):
+#   R_4fc              — w11=1.60, strongest reward; sustained 4-feet contact
+#   R_stability        — w12=0.45; CoM inside support polygon
+#   R_ellipse_posture  — w13=0.35; foot placement quality
+#   R_torque_efficiency— w14=0.20; low torque usage
+#   R_jitter_contact   — w9=0.08 (penalty, stored negative); penalise contact switching
 REWARD_KEYS = [
-    'R_h', 'R_g', 'R_h_cl', 'R_jp', 'R_fc',
-    'R_ad', 'R_v', 'R_vb', 'R_alive', 'R_progress',
+    'R_h', 'R_g', 'R_jp', 'R_fc', 'R_ad', 'R_vb',
+    'R_4fc', 'R_stability', 'R_ellipse_posture',
+    'R_torque_efficiency', 'R_jitter_contact',
 ]
 
 # Observation indices each subagent cares about (state partitioning).
@@ -25,16 +39,17 @@ REWARD_KEYS = [
 #   [30:33] com_pos_base
 #   [33:36] com_vel_base
 STATE_MASKS: dict[str, list[int]] = {
-    'R_h':       [24, 25, 26] + list(range(30, 33)),   # orientation + com_pos (height proxy)
-    'R_g':       [24, 25, 26],
-    'R_h_cl':    [24, 25, 26] + list(range(30, 33)),
-    'R_jp':      list(range(0, 12)),
-    'R_fc':      list(range(0, 12)) + [24, 25, 26],
-    'R_ad':      list(range(0, 36)),
-    'R_v':       list(range(12, 24)),
-    'R_vb':      [27, 28, 29] + list(range(33, 36)),   # ang_vel + com_vel
-    'R_alive':   list(range(0, 36)),
-    'R_progress':[24, 25, 26],
+    'R_h':                [24, 25, 26] + list(range(30, 33)),  # orientation + com_pos
+    'R_g':                [24, 25, 26],
+    'R_jp':               list(range(0, 12)),
+    'R_fc':               list(range(0, 12)) + [24, 25, 26],
+    'R_ad':               list(range(0, 36)),
+    'R_vb':               [27, 28, 29] + list(range(33, 36)),  # ang_vel + com_vel
+    'R_4fc':              list(range(0, 12)) + [24, 25, 26],   # joints + orientation
+    'R_stability':        list(range(0, 36)),                   # full state (CoM + feet)
+    'R_ellipse_posture':  list(range(0, 12)) + [24, 25, 26],   # joints + orientation
+    'R_torque_efficiency':list(range(0, 24)),                   # joint pos + vel
+    'R_jitter_contact':   list(range(0, 12)) + [24, 25, 26],   # joints + orientation
 }
 
 LOG_STD_MIN = -5
