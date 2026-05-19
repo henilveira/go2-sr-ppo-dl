@@ -50,17 +50,13 @@ class QDecompSAC:
         # R_jitter_contact is a penalty → stored negative.
         w = config['reward']['weights']
         self._reward_scale = {
-            'R_h':                 w.get('w1',  0.30) * +1,
-            'R_g':                 w.get('w2',  0.30) * +1,
-            'R_jp':                w.get('w4',  0.60) * +1,
-            'R_fc':                w.get('w5',  0.10) * +1,
-            'R_ad':                w.get('w6',  0.05) * +1,
-            'R_vb':                w.get('w8',  0.05) * +1,
-            'R_4fc':               w.get('w11', 1.60) * +1,
-            'R_stability':         w.get('w12', 0.45) * +1,
-            'R_ellipse_posture':   w.get('w13', 0.35) * +1,
-            'R_torque_efficiency': w.get('w14', 0.20) * +1,
-            'R_jitter_contact':    w.get('w9',  0.08) * -1,
+            'R_h':   w.get('w1',  0.30),
+            'R_g':   w.get('w2',  0.30),
+            'R_jp':  w.get('w4',  0.60),
+            'R_fc':  w.get('w5',  0.10),
+            'R_ad':  w.get('w6',  0.05),
+            'R_vb':  w.get('w8',  0.05),
+            'R_4fc': w.get('w11', 1.60),
         }
 
         # Networks

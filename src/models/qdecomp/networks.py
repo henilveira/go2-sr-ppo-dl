@@ -25,9 +25,7 @@ from torch.distributions import Normal
 #   R_torque_efficiency— w14=0.20; low torque usage
 #   R_jitter_contact   — w9=0.08 (penalty, stored negative); penalise contact switching
 REWARD_KEYS = [
-    'R_h', 'R_g', 'R_jp', 'R_fc', 'R_ad', 'R_vb',
-    'R_4fc', 'R_stability', 'R_ellipse_posture',
-    'R_torque_efficiency', 'R_jitter_contact',
+    'R_h', 'R_g', 'R_jp', 'R_fc', 'R_ad', 'R_vb', 'R_4fc',
 ]
 
 # Observation indices each subagent cares about (state partitioning).
@@ -39,17 +37,13 @@ REWARD_KEYS = [
 #   [30:33] com_pos_base
 #   [33:36] com_vel_base
 STATE_MASKS: dict[str, list[int]] = {
-    'R_h':                [24, 25, 26] + list(range(30, 33)),  # orientation + com_pos
-    'R_g':                [24, 25, 26],
-    'R_jp':               list(range(0, 12)),
-    'R_fc':               list(range(0, 12)) + [24, 25, 26],
-    'R_ad':               list(range(0, 36)),
-    'R_vb':               [27, 28, 29] + list(range(33, 36)),  # ang_vel + com_vel
-    'R_4fc':              list(range(0, 12)) + [24, 25, 26],   # joints + orientation
-    'R_stability':        list(range(0, 36)),                   # full state (CoM + feet)
-    'R_ellipse_posture':  list(range(0, 12)) + [24, 25, 26],   # joints + orientation
-    'R_torque_efficiency':list(range(0, 24)),                   # joint pos + vel
-    'R_jitter_contact':   list(range(0, 12)) + [24, 25, 26],   # joints + orientation
+    'R_h':   [24, 25, 26] + list(range(30, 33)),  # orientation + com_pos
+    'R_g':   [24, 25, 26],
+    'R_jp':  list(range(0, 12)),
+    'R_fc':  list(range(0, 12)) + [24, 25, 26],
+    'R_ad':  list(range(0, 36)),
+    'R_vb':  [27, 28, 29] + list(range(33, 36)),  # ang_vel + com_vel
+    'R_4fc': list(range(0, 12)) + [24, 25, 26],   # joints + orientation
 }
 
 LOG_STD_MIN = -5
