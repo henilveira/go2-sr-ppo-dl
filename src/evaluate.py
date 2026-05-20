@@ -20,6 +20,7 @@ if str(project_root) not in sys.path:
 from stable_baselines3 import PPO, SAC
 from environment.go2_env import Go2Env
 from src.models.qdecomp.networks import Actor as QDecompActor
+from src.models.qdecomp_ppo.networks import MultiHeadPolicy as QDecompPPOPolicy
 
 
 def _load_trpo_class():
@@ -44,6 +45,9 @@ METHOD_ALIASES = {
     "qdecomp": "qdecomp",
     "q-decomp": "qdecomp",
     "qdecompsac": "qdecomp",
+    "qdecompppo": "qdecomp_ppo",
+    "qdecomp_ppo": "qdecomp_ppo",
+    "q-decomp-ppo": "qdecomp_ppo",
 }
 
 
@@ -109,6 +113,14 @@ METHOD_SPECS = {
             ("final", "final_model.pt"),
         ],
     },
+    "qdecomp_ppo": {
+        "logs_subdirs": ["qdecomp_ppo"],
+        "type": "qdecomp_ppo",
+        "candidates": [
+            ("best", "best_model.pt"),
+            ("final", "final_model.pt"),
+        ],
+    },
 }
 
 
@@ -147,7 +159,7 @@ class CMAModelWrapper:
 
 
 class QDecompModelWrapper:
-    """Wraps a QDecomp actor to emulate the Stable-Baselines `predict` interface."""
+    """Wraps a QDecomp SAC actor to emulate the Stable-Baselines `predict` interface."""
 
     def __init__(self, actor: QDecompActor):
         self.actor = actor
@@ -160,6 +172,20 @@ class QDecompModelWrapper:
                 action = self.actor.deterministic(obs_t)
             else:
                 action, _ = self.actor.sample(obs_t)
+        return action.squeeze(0).cpu().numpy(), None
+
+
+class QDecompPPOModelWrapper:
+    """Wraps a QDecomp PPO policy to emulate the Stable-Baselines `predict` interface."""
+
+    def __init__(self, policy: QDecompPPOPolicy):
+        self.policy = policy
+        self.policy.eval()
+
+    def predict(self, obs, deterministic=True):
+        obs_t = torch.as_tensor(obs, dtype=torch.float32).unsqueeze(0)
+        with torch.no_grad():
+            action = self.policy.predict(obs_t, deterministic=deterministic)
         return action.squeeze(0).cpu().numpy(), None
 
 
@@ -255,6 +281,16 @@ def load_trained_model(training_method, model_path, config):
         actor = QDecompActor(obs_dim=obs_dim, action_dim=12, hidden_sizes=hidden)
         actor.load_state_dict(checkpoint["actor"])
         return QDecompModelWrapper(actor)
+
+    if method_spec["type"] == "qdecomp_ppo":
+        checkpoint = torch.load(model_path, map_location="cpu")
+        qd_cfg = config.get("qdecomp_ppo", {})
+        hidden = qd_cfg.get("hidden_sizes", [256, 256])
+        # Infer obs_dim from saved trunk weights
+        obs_dim = checkpoint["policy"]["trunk.0.weight"].shape[1]
+        policy = QDecompPPOPolicy(obs_dim=obs_dim, action_dim=12, hidden_sizes=hidden)
+        policy.load_state_dict(checkpoint["policy"])
+        return QDecompPPOModelWrapper(policy)
 
     cma_config = config.get("cma_es", {})
     hidden_sizes = tuple(cma_config.get("hidden_sizes", [128, 128]))
@@ -658,7 +694,7 @@ if __name__ == "__main__":
         "--model",
         type=str,
         default="ppo",
-        help="Model type: ppo | trpo | sac | cma-es | cma | qdecomp",
+        help="Model type: ppo | trpo | sac | cma-es | cma | qdecomp | qdecomp_ppo",
     )
     parser.add_argument(
         "--terrain",
