@@ -47,16 +47,21 @@ class QDecompSAC:
         self.gradient_steps  = cfg.get('gradient_steps', 1)
 
         # Weighted contributions so that sum(reward_vector) ≈ total_reward.
-        # R_jitter_contact is a penalty → stored negative.
+        # R_stance is synthetic (R_g × R_fc) — computed in store_transition, not
+        # looked up directly from reward_breakdown.
         w = config['reward']['weights']
         self._reward_scale = {
-            'R_h':   w.get('w1',  0.30),
-            'R_g':   w.get('w2',  0.30),
-            'R_jp':  w.get('w4',  0.60),
-            'R_fc':  w.get('w5',  0.10),
-            'R_ad':  w.get('w6',  0.05),
-            'R_vb':  w.get('w8',  0.05),
-            'R_4fc': w.get('w11', 1.60),
+            'R_h':     w.get('w1',  0.30),
+            'R_g':     w.get('w2',  0.30),
+            'R_jp':    w.get('w4',  0.60),
+            'R_fc':    w.get('w5',  0.10),
+            'R_ad':    w.get('w6',  0.05),
+            'R_vb':    w.get('w8',  0.05),
+            'R_4fc':   w.get('w11', 1.60),
+            # Synthetic bridging signal: nonzero only when BOTH oriented upright
+            # AND foot-contacting. Fills the gradient gap between trunk rotation
+            # (R_g active) and full standing (R_4fc active).
+            'R_stance': 0.50,
         }
 
         # Networks
@@ -115,11 +120,21 @@ class QDecompSAC:
         done: bool,
     ):
         # Store weighted contributions so Σ reward_vector ≈ total_reward.
+        # R_stance is synthetic: product of R_g × R_fc (both in [0,1]).
         reward_vector = np.array(
-            [self._reward_scale[k] * reward_breakdown.get(k, 0.0) for k in self.reward_keys],
+            [self._compute_component(k, reward_breakdown) for k in self.reward_keys],
             dtype=np.float32,
         )
         self.buffer.store(obs, action, reward_vector, next_obs, done)
+
+    def _compute_component(self, key: str, breakdown: dict) -> float:
+        """Return the weighted reward for a single subagent component."""
+        if key == 'R_stance':
+            # Synthetic: fires only when BOTH upright AND foot-contacting.
+            val = breakdown.get('R_g', 0.0) * breakdown.get('R_fc', 0.0)
+        else:
+            val = breakdown.get(key, 0.0)
+        return self._reward_scale[key] * val
 
     # ------------------------------------------------------------------
     # Update step

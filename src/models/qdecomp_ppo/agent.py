@@ -42,16 +42,19 @@ class DecompPPO:
         self.max_grad_norm = cfg.get('max_grad_norm',  0.5)
         hidden             = cfg.get('hidden_sizes',   [256, 256])
 
-        # Weighted contributions (same as SAC version)
+        # Weighted contributions (same as SAC version).
+        # R_stance is synthetic (R_g × R_fc) — computed in collect_rollout.
         w = config['reward']['weights']
         self._reward_scale = {
-            'R_h':   w.get('w1',  0.30),
-            'R_g':   w.get('w2',  0.30),
-            'R_jp':  w.get('w4',  0.60),
-            'R_fc':  w.get('w5',  0.10),
-            'R_ad':  w.get('w6',  0.05),
-            'R_vb':  w.get('w8',  0.05),
-            'R_4fc': w.get('w11', 1.60),
+            'R_h':     w.get('w1',  0.30),
+            'R_g':     w.get('w2',  0.30),
+            'R_jp':    w.get('w4',  0.60),
+            'R_fc':    w.get('w5',  0.10),
+            'R_ad':    w.get('w6',  0.05),
+            'R_vb':    w.get('w8',  0.05),
+            'R_4fc':   w.get('w11', 1.60),
+            # Synthetic bridging: fires when BOTH upright AND foot-contacting.
+            'R_stance': 0.50,
         }
 
         self.policy    = MultiHeadPolicy(obs_dim, action_dim, hidden).to(device)
@@ -88,6 +91,19 @@ class DecompPPO:
         )
 
     # ------------------------------------------------------------------
+    # Reward helpers
+    # ------------------------------------------------------------------
+
+    def _compute_component(self, key: str, breakdown: dict) -> float:
+        """Return the weighted reward for a single subagent component."""
+        if key == 'R_stance':
+            # Synthetic: fires only when BOTH upright AND foot-contacting.
+            val = breakdown.get('R_g', 0.0) * breakdown.get('R_fc', 0.0)
+        else:
+            val = breakdown.get(key, 0.0)
+        return self._reward_scale[key] * val
+
+    # ------------------------------------------------------------------
     # Collect rollout
     # ------------------------------------------------------------------
 
@@ -105,7 +121,7 @@ class DecompPPO:
 
             breakdown  = info.get('reward_breakdown', {})
             reward_vec = np.array(
-                [self._reward_scale[k] * breakdown.get(k, 0.0) for k in self.reward_keys],
+                [self._compute_component(k, breakdown) for k in self.reward_keys],
                 dtype=np.float32,
             )
             ep_reward += sum(reward_vec)

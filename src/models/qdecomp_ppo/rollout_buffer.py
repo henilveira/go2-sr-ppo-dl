@@ -100,9 +100,18 @@ class MultiRewardRolloutBuffer:
                 next_done = done_t
 
         self.returns   = advantages + self.values          # (T, N)
-        self.adv_total = advantages.sum(axis=1, keepdims=True)  # (T, 1)
 
-        # Normalize total advantage
+        # Normalize each component individually before summing.
+        # This prevents high-weight components (e.g. R_4fc w=1.60) from
+        # dominating and overwhelming low-weight ones (e.g. R_ad w=0.05).
+        norm_advantages = np.zeros_like(advantages)
+        for j in range(self.n_subagents):
+            col = advantages[:, j]
+            norm_advantages[:, j] = (col - col.mean()) / (col.std() + 1e-8)
+
+        self.adv_total = norm_advantages.sum(axis=1, keepdims=True)  # (T, 1)
+
+        # Final global normalisation of the summed advantage
         adv_mean = self.adv_total.mean()
         adv_std  = self.adv_total.std() + 1e-8
         self.adv_total = (self.adv_total - adv_mean) / adv_std

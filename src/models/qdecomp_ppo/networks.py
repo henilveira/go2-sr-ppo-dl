@@ -12,13 +12,15 @@ import torch
 import torch.nn as nn
 from torch.distributions import Normal
 
-# Same reward keys as Q-Decomp SAC (7 subagents after pruning)
+# Same reward keys as Q-Decomp SAC (8 subagents after adding R_stance)
+# R_stance is synthetic (computed in agent): R_g × R_fc
+# Bridges the gradient gap between trunk rotation and full standing.
 REWARD_KEYS = [
-    'R_h', 'R_g', 'R_jp', 'R_fc', 'R_ad', 'R_vb', 'R_4fc',
+    'R_h', 'R_g', 'R_jp', 'R_fc', 'R_ad', 'R_vb', 'R_4fc', 'R_stance',
 ]
 
 LOG_STD_MIN = -5
-LOG_STD_MAX = 2
+LOG_STD_MAX = 0.5   # was 2 — capping at 2 saturated entropy to theoretical max
 
 
 class MultiHeadPolicy(nn.Module):
