@@ -344,12 +344,33 @@ class Go2Env(gym.Env):
 
         self.data.qpos[0:3] = spawn['pos']
 
-        roll = np.pi + np.random.uniform(-0.1, 0.1)
+        # ------------------------------------------------------------------
+        # Recovery curriculum
+        # ------------------------------------------------------------------
+        # "prone" start: robot is born belly-DOWN (roll≈0) in a crouched stance
+        # with feet already under the body. It only needs to PUSH UP to stand,
+        # which makes the standing reward gradient (R_g, R_jp, R_fc, R_stance)
+        # immediately discoverable — instead of having to first solve the hard
+        # belly-up flip, which the policy never discovered and where it fell
+        # into the passive reward-farming local optimum (lying still for R_vb/R_ad).
+        curric = self.config.get('training', {}).get('recovery_curriculum', {})
+        curric_enabled  = bool(curric.get('enabled', False))
+        prone_prob      = float(curric.get('prone_start_prob', 0.0))
+        use_prone_start = curric_enabled and (np.random.rand() < prone_prob)
+
+        if use_prone_start:
+            # Belly-down: body z-axis already points up (no flip needed).
+            roll = 0.0 + np.random.uniform(-0.1, 0.1)
+        else:
+            # Original hard start: belly-up (upside down), full flip required.
+            roll = np.pi + np.random.uniform(-0.1, 0.1)
+
         pitch = np.deg2rad(spawn['pitch_deg']) + np.random.uniform(-0.1, 0.1)
         yaw = np.random.uniform(-np.pi, np.pi)
         quat = self._euler_to_quat([roll, pitch, yaw])
         self.data.qpos[3:7] = quat
 
+        # Tucked config used for the hard (belly-up) start.
         tucked_config = np.array([
             0.0, 1.8, -2.4,
             0.0, 1.8, -2.4,
@@ -357,16 +378,28 @@ class Go2Env(gym.Env):
             0.0, 1.8, -2.4,
         ])
 
+        # Crouched-but-ready config for the prone start: feet under the body,
+        # legs slightly folded. Extending toward the nominal standing pose
+        # (thigh≈0.9, calf≈-1.8) lifts the trunk to target height.
+        crouch_config = np.array([
+            0.0, 1.2, -2.0,
+            0.0, 1.2, -2.0,
+            0.0, 1.2, -2.0,
+            0.0, 1.2, -2.0,
+        ])
+
+        base_config = crouch_config if use_prone_start else tucked_config
+
         if self.config['training'].get('random_joint_positions', True):
             noise = np.random.uniform(-0.2, 0.2, size=12)
-            joint_pos = tucked_config + noise
+            joint_pos = base_config + noise
             for i, (lower, upper) in enumerate(self.joint_limits):
                 joint_pos[i] = np.clip(joint_pos[i], lower, upper)
             for i, addr in enumerate(self.joint_qpos_addr):
                 self.data.qpos[addr] = joint_pos[i]
         else:
             for i, addr in enumerate(self.joint_qpos_addr):
-                self.data.qpos[addr] = tucked_config[i]
+                self.data.qpos[addr] = base_config[i]
 
         self.data.qvel[:] = 0
         mujoco.mj_forward(self.model, self.data)

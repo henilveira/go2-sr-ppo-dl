@@ -57,10 +57,9 @@ class QDecompSAC:
             'R_fc':    w.get('w5',  0.10),
             'R_ad':    w.get('w6',  0.05),
             'R_vb':    w.get('w8',  0.05),
-            'R_4fc':   w.get('w11', 1.60),
-            # Synthetic bridging signal: nonzero only when BOTH oriented upright
-            # AND foot-contacting. Fills the gradient gap between trunk rotation
-            # (R_g active) and full standing (R_4fc active).
+            # Synthetic "standing" signal: nonzero only when BOTH oriented upright
+            # AND foot-contacting. Replaces the dead R_4fc as the main reward for
+            # actually standing up (works thanks to the prone spawn curriculum).
             'R_stance': 0.50,
         }
 

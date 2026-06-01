@@ -237,6 +237,14 @@ training:
   random_orientation: true
   random_joint_positions: true
   total_episodes: 300
+  # ---- Recovery curriculum ----
+  # "prone" start: robot is born belly-DOWN in a crouched stance, feet under
+  # the body, only needing to push up to stand. Makes the standing reward
+  # gradient discoverable instead of requiring the hard belly-up flip.
+  # prone_start_prob = fraction of episodes that use the easy prone start.
+  recovery_curriculum:
+    enabled: true
+    prone_start_prob: 1.0   # 1.0 = always easy start; lower it later to mix in hard flips
   total_timesteps_ppo: 3_686_400
   total_timesteps_trpo: 3_686_400
   total_timesteps_sac: 3_686_400

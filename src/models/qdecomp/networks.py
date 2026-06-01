@@ -19,13 +19,18 @@ from torch.distributions import Normal
 #   R_progress — duplicate of R_g (both measure uprightness via orientation)
 #   R_h_cl     — identical computation to R_h, just curriculum-gated
 #
+# Removed R_4fc:
+#   In training it was ALWAYS 0.0 (the robot never achieved 4-feet contact),
+#   so its Q-networks learned nothing while its weight (1.60) inflated the
+#   critic-target scale (loss/critic peaked at 2.6M). Pure dead weight.
+#
 # Synthetic (computed in agent from existing breakdown keys):
 #   R_stance   — = R_g × R_fc; nonzero only when BOTH upright AND foot-contacting.
-#                Bridges the gap between trunk rotation (R_g signals) and full
-#                standing (R_4fc signals): robot must maintain orientation while
-#                simultaneously landing feet.
+#                With the prone (belly-down) spawn curriculum, R_g starts high
+#                and R_fc becomes nonzero, so R_stance is now the main "standing"
+#                signal that replaces R_4fc.
 REWARD_KEYS = [
-    'R_h', 'R_g', 'R_jp', 'R_fc', 'R_ad', 'R_vb', 'R_4fc', 'R_stance',
+    'R_h', 'R_g', 'R_jp', 'R_fc', 'R_ad', 'R_vb', 'R_stance',
 ]
 
 # Observation indices each subagent cares about (state partitioning).
@@ -43,7 +48,6 @@ STATE_MASKS: dict[str, list[int]] = {
     'R_fc':    list(range(0, 12)) + [24, 25, 26],
     'R_ad':    list(range(0, 36)),
     'R_vb':    [27, 28, 29] + list(range(33, 36)),  # ang_vel + com_vel
-    'R_4fc':   list(range(0, 12)) + [24, 25, 26],   # joints + orientation
     'R_stance': list(range(0, 12)) + [24, 25, 26] + list(range(30, 33)),  # joints + orient + com_pos
 }
 

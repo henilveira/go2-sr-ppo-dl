@@ -12,11 +12,11 @@ import torch
 import torch.nn as nn
 from torch.distributions import Normal
 
-# Same reward keys as Q-Decomp SAC (8 subagents after adding R_stance)
-# R_stance is synthetic (computed in agent): R_g × R_fc
-# Bridges the gradient gap between trunk rotation and full standing.
+# Same reward keys as Q-Decomp SAC (7 subagents).
+# R_4fc removed (always 0.0 in training — never fired).
+# R_stance is synthetic (computed in agent): R_g × R_fc — the main standing signal.
 REWARD_KEYS = [
-    'R_h', 'R_g', 'R_jp', 'R_fc', 'R_ad', 'R_vb', 'R_4fc', 'R_stance',
+    'R_h', 'R_g', 'R_jp', 'R_fc', 'R_ad', 'R_vb', 'R_stance',
 ]
 
 LOG_STD_MIN = -5
