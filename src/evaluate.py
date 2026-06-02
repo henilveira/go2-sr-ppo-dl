@@ -518,9 +518,11 @@ def evaluate(training_method=None, terrain_mode="default", level=0, random_terra
         print(f"   Model observation dim: {expected_obs_dim}")
     
     # Create environment
+    # eval_mode=True forces the real self-recovery task: robot always starts
+    # belly-UP (supine), ignoring the prone training curriculum.
     print("\n3. Creating environment...")
-    env = Go2Env(config, render_mode=None)
-    print("   ✓ Environment created")
+    env = Go2Env(config, render_mode=None, eval_mode=True)
+    print("   ✓ Environment created (eval_mode: belly-up SR start)")
     
     print("\n4. Starting evaluation...")
     print(f"   Terrain mode: {terrain_mode}")

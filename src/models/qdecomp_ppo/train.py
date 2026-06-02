@@ -30,8 +30,10 @@ def load_config():
         return yaml.safe_load(f)
 
 
-def make_env(config):
-    return Go2Env(config, render_mode=None)
+def make_env(config, eval_mode=False):
+    # eval_mode=True always starts belly-up (real SR task); training rollouts
+    # use the prone curriculum.
+    return Go2Env(config, render_mode=None, eval_mode=eval_mode)
 
 
 def evaluate(agent: DecompPPO, env: Go2Env, n_episodes: int = 5) -> dict:
@@ -81,7 +83,7 @@ def train(total_timesteps_override: int | None = None):
     print(f"Output: {output_dir}\n")
 
     env      = make_env(config)
-    eval_env = make_env(config)
+    eval_env = make_env(config, eval_mode=True)
 
     obs_dim    = env.observation_space.shape[0]
     action_dim = env.action_space.shape[0]

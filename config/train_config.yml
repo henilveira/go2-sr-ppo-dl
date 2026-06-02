@@ -245,6 +245,7 @@ training:
   recovery_curriculum:
     enabled: true
     prone_start_prob: 1.0   # 1.0 = always easy start; lower it later to mix in hard flips
+    prone_spawn_lift: 0.22  # extra height (m) added at prone spawn so crouched legs clear the terrain
   total_timesteps_ppo: 3_686_400
   total_timesteps_trpo: 3_686_400
   total_timesteps_sac: 3_686_400

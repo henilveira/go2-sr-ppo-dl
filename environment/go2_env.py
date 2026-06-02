@@ -31,11 +31,15 @@ class Go2Env(gym.Env):
     
     metadata = {'render_modes': ['human', 'rgb_array'], 'render_fps': 50}
     
-    def __init__(self, config, render_mode=None):
+    def __init__(self, config, render_mode=None, eval_mode=False):
         super().__init__()
-        
+
         self.config = config
         self.render_mode = render_mode
+        # eval_mode=True forces the real self-recovery task on every reset:
+        # robot always starts belly-UP (supine), ignoring the prone training
+        # curriculum. Used by evaluate.py and by the eval envs in train loops.
+        self.eval_mode = eval_mode
         
         # Timesteps - must be defined BEFORE _load_model()
         self.dyn_dt = self.config.get('simulation', {}).get('dyn_dt', 0.001)  # Physics timestep
@@ -356,11 +360,23 @@ class Go2Env(gym.Env):
         curric = self.config.get('training', {}).get('recovery_curriculum', {})
         curric_enabled  = bool(curric.get('enabled', False))
         prone_prob      = float(curric.get('prone_start_prob', 0.0))
-        use_prone_start = curric_enabled and (np.random.rand() < prone_prob)
+        # eval_mode ALWAYS uses the real SR task (belly-up) — the prone
+        # curriculum is a training-only aid.
+        use_prone_start = (
+            curric_enabled
+            and not self.eval_mode
+            and (np.random.rand() < prone_prob)
+        )
 
         if use_prone_start:
             # Belly-down: body z-axis already points up (no flip needed).
             roll = 0.0 + np.random.uniform(-0.1, 0.1)
+            # Raise the spawn so the crouched legs clear the terrain instead of
+            # penetrating it. spawn['pos'][2] is the terrain-relative height
+            # tuned for the low belly-up start; the prone crouch extends the
+            # legs downward ~0.2 m, so lift by that amount and let it settle.
+            prone_lift = float(curric.get('prone_spawn_lift', 0.22))
+            self.data.qpos[2] = spawn['pos'][2] + prone_lift
         else:
             # Original hard start: belly-up (upside down), full flip required.
             roll = np.pi + np.random.uniform(-0.1, 0.1)
