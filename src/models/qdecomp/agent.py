@@ -63,6 +63,15 @@ class QDecompSAC:
             'R_stance': 0.50,
         }
 
+        # R_stance hold-streak: rewards SUSTAINING the stand, not transiently
+        # passing through upright while rolling. The streak counts consecutive
+        # steps that are upright (R_g > gate) AND in foot contact; it resets to
+        # 0 the moment the robot rolls/falls, so repeated rolling can never farm
+        # it. R_stance = R_g · R_fc · (1 - exp(-α·streak)).
+        self._stance_streak = 0
+        self._stance_alpha  = cfg.get('stance_streak_alpha', 0.05)
+        self._stance_gate   = cfg.get('stance_gate', 0.6)
+
         # Networks
         self.actor = Actor(obs_dim, action_dim, hidden).to(device)
         self.critics = QDecompCritic(
@@ -119,21 +128,38 @@ class QDecompSAC:
         done: bool,
     ):
         # Store weighted contributions so Σ reward_vector ≈ total_reward.
-        # R_stance is synthetic: product of R_g × R_fc (both in [0,1]).
+        # R_stance is synthetic: R_g × R_fc × hold-streak factor.
         reward_vector = np.array(
             [self._compute_component(k, reward_breakdown) for k in self.reward_keys],
             dtype=np.float32,
         )
         self.buffer.store(obs, action, reward_vector, next_obs, done)
+        if done:
+            self._stance_streak = 0  # reset hold-streak at episode boundary
 
     def _compute_component(self, key: str, breakdown: dict) -> float:
         """Return the weighted reward for a single subagent component."""
         if key == 'R_stance':
-            # Synthetic: fires only when BOTH upright AND foot-contacting.
-            val = breakdown.get('R_g', 0.0) * breakdown.get('R_fc', 0.0)
+            val = self._stance_value(breakdown)
         else:
             val = breakdown.get(key, 0.0)
         return self._reward_scale[key] * val
+
+    def _stance_value(self, breakdown: dict) -> float:
+        """
+        Synthetic 'stand and HOLD' reward.
+        Fires only when upright AND foot-contacting, and grows the longer the
+        stand is sustained. Rolling/falling breaks the gate → streak resets → a
+        transient pass through upright is worth almost nothing.
+        """
+        r_g  = breakdown.get('R_g', 0.0)
+        r_fc = breakdown.get('R_fc', 0.0)
+        if r_g > self._stance_gate and r_fc > 0.0:
+            self._stance_streak += 1
+        else:
+            self._stance_streak = 0
+        hold = 1.0 - np.exp(-self._stance_alpha * self._stance_streak)
+        return r_g * r_fc * hold
 
     # ------------------------------------------------------------------
     # Update step

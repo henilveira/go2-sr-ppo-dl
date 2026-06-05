@@ -57,6 +57,12 @@ class DecompPPO:
             'R_stance': 0.50,
         }
 
+        # R_stance hold-streak (see SAC agent for rationale): rewards SUSTAINING
+        # the stand, resets on roll/fall so repeated rolling cannot farm it.
+        self._stance_streak = 0
+        self._stance_alpha  = cfg.get('stance_streak_alpha', 0.05)
+        self._stance_gate   = cfg.get('stance_gate', 0.6)
+
         self.policy    = MultiHeadPolicy(obs_dim, action_dim, hidden).to(device)
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=cfg.get('learning_rate', 3e-4))
 
@@ -97,11 +103,24 @@ class DecompPPO:
     def _compute_component(self, key: str, breakdown: dict) -> float:
         """Return the weighted reward for a single subagent component."""
         if key == 'R_stance':
-            # Synthetic: fires only when BOTH upright AND foot-contacting.
-            val = breakdown.get('R_g', 0.0) * breakdown.get('R_fc', 0.0)
+            val = self._stance_value(breakdown)
         else:
             val = breakdown.get(key, 0.0)
         return self._reward_scale[key] * val
+
+    def _stance_value(self, breakdown: dict) -> float:
+        """
+        Synthetic 'stand and HOLD' reward: upright AND foot-contacting, growing
+        with sustained duration. Rolling/falling resets the streak.
+        """
+        r_g  = breakdown.get('R_g', 0.0)
+        r_fc = breakdown.get('R_fc', 0.0)
+        if r_g > self._stance_gate and r_fc > 0.0:
+            self._stance_streak += 1
+        else:
+            self._stance_streak = 0
+        hold = 1.0 - np.exp(-self._stance_alpha * self._stance_streak)
+        return r_g * r_fc * hold
 
     # ------------------------------------------------------------------
     # Collect rollout
@@ -130,6 +149,7 @@ class DecompPPO:
             obs = next_obs if not done else env.reset()[0]
 
             if done:
+                self._stance_streak = 0  # reset hold-streak at episode boundary
                 ep_rewards.append(ep_reward)
                 ep_reward = 0.0
 

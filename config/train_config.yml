@@ -351,6 +351,11 @@ qdecomp:
   eval_freq: 25_000
   n_eval_episodes: 5
   save_freq: 100_000
+  # R_stance hold-streak: rewards SUSTAINING the stand (anti-rolling).
+  # R_stance = R_g · R_fc · (1 - exp(-alpha · streak)); streak counts consecutive
+  # upright (R_g > gate) + foot-contact steps and resets on roll/fall.
+  stance_streak_alpha: 0.05
+  stance_gate: 0.6
 
 # ==================== Q-DECOMPOSITION PPO ====================
 # On-policy equivalent of Q-decomposition.
@@ -371,3 +376,6 @@ qdecomp_ppo:
   eval_freq: 25_000
   n_eval_episodes: 5
   save_freq: 100_000
+  # R_stance hold-streak (anti-rolling) — see qdecomp section above.
+  stance_streak_alpha: 0.05
+  stance_gate: 0.6

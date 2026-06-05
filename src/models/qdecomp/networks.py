@@ -48,7 +48,9 @@ STATE_MASKS: dict[str, list[int]] = {
     'R_fc':    list(range(0, 12)) + [24, 25, 26],
     'R_ad':    list(range(0, 36)),
     'R_vb':    [27, 28, 29] + list(range(33, 36)),  # ang_vel + com_vel
-    'R_stance': list(range(0, 12)) + [24, 25, 26] + list(range(30, 33)),  # joints + orient + com_pos
+    # joints + orientation + ang_vel + com_pos: ang_vel lets the subagent learn
+    # that base spin (rolling) breaks the standing streak.
+    'R_stance': list(range(0, 12)) + [24, 25, 26, 27, 28, 29] + list(range(30, 33)),
 }
 
 LOG_STD_MIN = -5
